@@ -34,7 +34,7 @@ function hojaDatos() {
         const cub = m3 * share;
         filas.push([
           new Date(2026, 7, dia), '08:30', 'G' + dia + j, prov, predios[prov], comunas[prov],
-          '251-' + (10 + j), cal, nom, 24 + j, 3.2, Math.round(cub / 0.28), cub
+          '251-' + (10 + j * 3 + (i % 3)), cal, nom, 24 + j, 3.2, Math.round(cub / 0.28), cub
         ]);
       });
     });
@@ -106,7 +106,8 @@ function crearHoja(nombre, datos) {
     getLastRow: () => hoja.datos.length,
     getLastColumn: () => Math.max(...hoja.datos.map(r => r.length), 0),
     getMaxRows: () => Math.max(hoja.datos.length, 500),
-    getDataRange: () => crearRango(hoja, 1, 1, hoja.datos.length, hoja.getLastColumn()),
+    getDataRange: () => { lecturasHoja[nombre] = (lecturasHoja[nombre] || 0) + 1;
+                          return crearRango(hoja, 1, 1, hoja.datos.length, hoja.getLastColumn()); },
     getRange: (f, c, nf, nc) => crearRango(hoja, f, c, nf === undefined ? 1 : nf, nc === undefined ? 1 : nc),
     appendRow(row) { hoja.datos.push(row.slice()); return hoja; },
     deleteRow(i) { hoja.datos.splice(i - 1, 1); return hoja; },
@@ -117,6 +118,12 @@ function crearHoja(nombre, datos) {
   };
   return hoja;
 }
+
+// Contador de lecturas completas por hoja: sirve para comprobar que el GIS
+// ya no relee "Hoja 1" por su cuenta.
+const lecturasHoja = {};
+global.__lecturasHoja = () => Object.assign({}, lecturasHoja);
+global.__resetLecturasHoja = () => { Object.keys(lecturasHoja).forEach(k => delete lecturasHoja[k]); };
 
 const hojas = {};
 Object.keys(HOJAS).forEach(n => { if (HOJAS[n]) hojas[n] = crearHoja(n, HOJAS[n]); });
@@ -155,3 +162,107 @@ global.CacheService = {
 global.LockService = { getScriptLock: () => ({ waitLock(){}, releaseLock(){} }) };
 global.PropertiesService = { getScriptProperties: () => ({ getProperty: () => null, setProperty(){} }) };
 global.__hojas = hojas;
+
+/*************************
+ DRIVE + XML: carpeta GIS simulada
+**************************/
+
+function kmlPoligono(lat, lng) {
+  const p = (dlat, dlng) => `${(lng + dlng).toFixed(5)},${(lat + dlat).toFixed(5)},0`;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark><Polygon>
+<outerBoundaryIs><LinearRing><coordinates>
+${p(0,0)} ${p(0.01,0)} ${p(0.01,0.01)} ${p(0,0.01)} ${p(0,0)}
+</coordinates></LinearRing></outerBoundaryIs>
+</Polygon></Placemark></Document></kml>`;
+}
+
+// La hoja tiene 15 roles (251-10 a 251-24). Se dejan 12 con archivo, 3 sin
+// archivo, y uno huérfano que no aparece en la hoja. Con 12 predios y tandas
+// de 8, el cliente tiene que pedir la geometría en dos vueltas.
+const ARCHIVOS_GIS = [];
+for (let n = 10; n < 22; n++) {
+  ARCHIVOS_GIS.push({
+    nombre: '251-' + n + (n % 4 === 0 ? '.kmz' : '.kml'),
+    lat: -36.4 - (n - 10) * 0.15,
+    lng: -72.2 - (n - 10) * 0.08
+  });
+}
+ARCHIVOS_GIS.push({ nombre: '999-99.kml', lat: -36.0, lng: -72.0 });
+
+const archivosPorId = {};
+let lecturasDrive = 0;
+
+ARCHIVOS_GIS.forEach((a, i) => {
+  const id = 'file-' + i;
+  archivosPorId[id] = {
+    getId: () => id,
+    getName: () => a.nombre,
+    getLastUpdated: () => new Date(2026, 0, 1),
+    getBlob: () => ({
+      getName: () => a.nombre,
+      getDataAsString: () => { lecturasDrive++; return kmlPoligono(a.lat, a.lng); },
+      setContentType() {}
+    })
+  };
+});
+
+global.DriveApp = {
+  getFolderById: () => ({
+    getFiles: () => {
+      const ids = Object.keys(archivosPorId);
+      let i = 0;
+      return { hasNext: () => i < ids.length, next: () => archivosPorId[ids[i++]] };
+    }
+  }),
+  getFileById: id => {
+    if (!archivosPorId[id]) throw new Error('Archivo inexistente: ' + id);
+    return archivosPorId[id];
+  }
+};
+
+/* XmlService mínimo: alcanza para el KML simple de arriba. */
+function parsearXml(texto) {
+  const limpio = String(texto).replace(/<\?xml[^>]*\?>/g, '').replace(/<!--[\s\S]*?-->/g, '');
+  const pila = [{ nombre: '#raiz', hijos: [], texto: '' }];
+  const re = /<(\/?)([A-Za-z0-9_:]+)([^>]*?)(\/?)>|([^<]+)/g;
+  let m;
+
+  while ((m = re.exec(limpio)) !== null) {
+    const [, cierre, nombre, , autoCierre, texto] = m;
+
+    if (texto !== undefined) { pila[pila.length - 1].texto += texto; continue; }
+    if (autoCierre) continue;
+
+    if (cierre) {
+      if (pila.length > 1) pila.pop();
+    } else {
+      const nodo = { nombre, hijos: [], texto: '' };
+      pila[pila.length - 1].hijos.push(nodo);
+      pila.push(nodo);
+    }
+  }
+
+  return pila[0].hijos[0];
+}
+
+function envolverNodo(nodo) {
+  return {
+    getName: () => nodo.nombre,
+    getText: () => nodo.texto,
+    getChildren: () => nodo.hijos.map(envolverNodo)
+  };
+}
+
+// Utilities.unzip para los .kmz: devuelve el KML interno.
+global.Utilities.unzip = blob => [{
+  getName: () => 'doc.kml',
+  getDataAsString: () => blob.getDataAsString()
+}];
+
+global.XmlService = {
+  parse: texto => ({ getRootElement: () => envolverNodo(parsearXml(texto)) })
+};
+
+global.__lecturasDrive = () => lecturasDrive;
+global.__resetLecturasDrive = () => { lecturasDrive = 0; };

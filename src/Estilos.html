@@ -49,6 +49,14 @@
     --h-header: 62px;
     --h-tabs:   46px;
 
+    /* Capas. Leaflet usa z-index internos de hasta 700 (panes, controles y
+       popups), así que el armazón pegajoso tiene que ir por encima o el mapa
+       se dibuja sobre el encabezado al hacer scroll. */
+    --z-filtros: 900;
+    --z-tabs:    950;
+    --z-header:  1000;
+    --z-barra:   1200;
+
     --shadow-1: 0 1px 2px rgba(30,77,56,.06), 0 4px 16px rgba(30,77,56,.05);
     --shadow-2: 0 8px 28px rgba(30,77,56,.12);
   }
@@ -102,7 +110,7 @@
     color: white;
     position: sticky;
     top: 0;
-    z-index: 60;
+    z-index: var(--z-header);
   }
 
   .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -184,7 +192,7 @@
   nav.tabs {
     position: sticky;
     top: var(--h-header);
-    z-index: 55;
+    z-index: var(--z-tabs);
     height: var(--h-tabs);
     display: flex;
     align-items: stretch;
@@ -234,7 +242,7 @@
   .filters-bar {
     position: sticky;
     top: calc(var(--h-header) + var(--h-tabs));
-    z-index: 50;
+    z-index: var(--z-filtros);
     background: var(--surface-2);
     padding: 12px 0 10px;
     margin-bottom: 4px;
@@ -660,12 +668,20 @@
 
   /* ═══════════════════════ MAPAS ═══════════════════════ */
 
+  /* position + z-index crean un contexto de apilamiento propio: todo lo que
+     Leaflet pinte adentro queda contenido en la tarjeta y ya no puede
+     treparse por encima del encabezado. */
   #map, #comunaMap {
+    position: relative;
+    z-index: 0;
+    isolation: isolate;
     height: 560px;
     border-radius: var(--r-control);
     overflow: hidden;
     border: 1px solid var(--line);
   }
+
+  .leaflet-container { font-family: inherit; }
   #comunaMap { height: 440px; }
 
   .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; align-items: stretch; }
@@ -918,7 +934,7 @@
     bottom: 18px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 1200;
+    z-index: var(--z-barra);
     background: var(--forest);
     color: #FFFFFF;
     border-radius: var(--r-pill);

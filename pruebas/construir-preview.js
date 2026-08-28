@@ -18,10 +18,15 @@ guardarApunte({ proveedor:'ANGOL LMTD', pregunta:'Confirma que sostiene el ritmo
   tipo:'Compromiso', prioridad:'Baja', estado:'Cerrado', m3:600, responsable:'Ignacio Ortiz',
   respuesta:'Confirmado: mantiene 6 camiones diarios hasta el 31.', cumplimiento:1.18, tendencia:'SUBE' });
 
+const indiceGis = getRolesIndex(true);
+const poligonosGis = getRolesPolygons(indiceGis.items.map(i => i.rolKey)).polygons;
+
 const RESPUESTAS = {
   getDashboardData: core.summary,
   getDetalleIngresos: core.detalle,
-  getRolesMapData: { items: [], diagnostics: { rolesEnHoja:5, rolesConArchivo:0, rolesSinArchivo:5, errores:[] } },
+  getRolesIndex: indiceGis,
+  getRolesPolygons: null,
+  __poligonos: poligonosGis,
   getApuntes: getApuntes(),
   guardarApunte: getApuntes(), cambiarEstadoApunte: getApuntes(), eliminarApunte: getApuntes(),
   getValoresRecepcion: {

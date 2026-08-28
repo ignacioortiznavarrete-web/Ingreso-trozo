@@ -104,5 +104,67 @@ let err = null;
 try { guardarApunte({ proveedor:'X', pregunta:'   ' }); } catch(e) { err = e; }
 ok(!!err && /pregunta/i.test(err.message), 'rechaza un apunte sin pregunta');
 
+console.log('\n9. GIS separado en índice y geometría');
+__resetLecturasHoja();
+const idx = getRolesIndex(true);
+ok(idx.items.length === 12, 'el índice trae los roles con archivo', idx.items.length);
+ok(idx.diagnostics.rolesEnHoja === 15, 'cuenta los roles de la hoja', idx.diagnostics.rolesEnHoja);
+ok(idx.diagnostics.rolesSinArchivo === 3, 'cuenta los roles sin archivo', idx.diagnostics.rolesSinArchivo);
+ok(idx.diagnostics.archivosEnCarpeta === 13, 'cuenta los archivos de la carpeta', idx.diagnostics.archivosEnCarpeta);
+ok(idx.items.every(i => Array.isArray(i.polygons) && i.polygons.length === 0),
+   'el índice NO trae geometría: esa es toda la gracia');
+ok(idx.items.every(i => i.fileId === undefined), 'el fileId no se expone al cliente');
+ok(idx.items.every(i => i.predio && i.proveedor && i.cubicacion >= 0),
+   'el índice ya trae lo necesario para la lista lateral');
+ok((__lecturasHoja()['Hoja 1'] || 0) === 0,
+   'construir el índice no relee Hoja 1: reusa la agregación cacheada',
+   __lecturasHoja()['Hoja 1'] || 0);
+
+__resetLecturasDrive();
+const lote = idx.items.slice(0, 2).map(i => i.rolKey);
+const poly1 = getRolesPolygons(lote);
+ok(Object.keys(poly1.polygons).length === 2, 'la primera tanda devuelve solo su lote',
+   Object.keys(poly1.polygons).length);
+ok(poly1.errores.length === 0, 'sin errores en la tanda');
+ok(poly1.polygons[lote[0]][0].length >= 4, 'el anillo trae sus vértices',
+   poly1.polygons[lote[0]][0].length);
+ok(poly1.polygons[lote[0]][0].every(p => Array.isArray(p) && p.length === 2),
+   'cada vértice es un par lat lng');
+const lecturasPrimera = __lecturasDrive();
+ok(lecturasPrimera === 2, 'abre un archivo por rol del lote', lecturasPrimera);
+
+getRolesPolygons(lote);
+ok(__lecturasDrive() === lecturasPrimera, 'repetir la tanda no vuelve a abrir los archivos',
+   __lecturasDrive());
+
+const resto = getRolesPolygons(idx.items.slice(2).map(i => i.rolKey));
+ok(Object.keys(resto.polygons).length === 10, 'la segunda tanda completa el resto',
+   Object.keys(resto.polygons).length);
+const rolesKmz = idx.items.filter(i => /\.kmz$/i.test(i.fileName)).map(i => i.rolKey);
+const todaLaGeometria = Object.assign({}, poly1.polygons, resto.polygons);
+ok(rolesKmz.length >= 1, 'el fixture incluye archivos KMZ', rolesKmz.length);
+ok(rolesKmz.every(k => (todaLaGeometria[k] || []).length > 0),
+   'los KMZ se descomprimen y entregan geometría igual que los KML');
+
+const inventado = getRolesPolygons(['ROL-QUE-NO-EXISTE']);
+ok(Object.keys(inventado.polygons).length === 0 && inventado.errores.length === 1,
+   'un rol inexistente devuelve error, no revienta');
+ok(getRolesPolygons([]).errores.length === 0, 'un lote vacío es inofensivo');
+ok(getRolesPolygons(null).errores.length === 0, 'un lote nulo es inofensivo');
+
+console.log('\n10. Comunas y regiones');
+ok(regionForComuna_('TOME') === 'Biobío', 'TOME quedó mapeada', regionForComuna_('TOME'));
+ok(regionForComuna_('YUNGAY') === 'Ñuble', 'YUNGAY quedó mapeada', regionForComuna_('YUNGAY'));
+ok(regionForComuna_('LOS ALAMOS') === 'Biobío', 'LOS ALAMOS quedó mapeada');
+ok(regionForComuna_('QUILACO') === 'Biobío', 'QUILACO quedó mapeada');
+ok(regionForComuna_('SANTA BARBARA') === 'Biobío', 'SANTA BARBARA quedó mapeada');
+ok(regionForComuna_('STA BARBARA') === 'Biobío', 'la abreviatura STA BARBARA resuelve igual',
+   regionForComuna_('STA BARBARA'));
+ok(regionForComuna_('Concepción') === 'Biobío', 'resuelve con tilde y minúsculas');
+ok(regionForComuna_('LAJAP') === 'Sin región asignada',
+   'una comuna que no existe se queda sin región, no se adivina');
+ok(d.regionesPorComuna && Object.keys(d.regionesPorComuna).length > 50,
+   'la tabla de regiones viaja al cliente', Object.keys(d.regionesPorComuna || {}).length);
+
 console.log('\n' + (fallos ? fallos + ' PRUEBAS FALLIDAS' : 'TODAS LAS PRUEBAS PASAN'));
 process.exit(fallos ? 1 : 0);

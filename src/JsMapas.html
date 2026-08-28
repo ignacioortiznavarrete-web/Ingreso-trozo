@@ -5,6 +5,7 @@
 ══════════════════════════════════════════════════════ */
 
 let ROLE_MAP_DATA = [];
+let ROLE_INDEX_BY_KEY = {};
 let MAP_DIAGNOSTICS = null;
 let MAP = null;
 let ROLE_LAYER_GROUP = null;
@@ -13,41 +14,173 @@ let COMUNA_MAP = null;
 let COMUNA_LAYER_GROUP = null;
 let ALL_BOUNDS = [];
 
-function setRoleListLoading() {
-  const head = document.getElementById('roleListHead');
-  const list = document.getElementById('roleList');
-  if (head) head.textContent = 'Cargando predios';
-  if (list) list.innerHTML = '<div class="role-empty">Cargando predios KML y KMZ desde Drive.</div>';
+/* Los KML y KMZ son lo más caro de todo el dashboard: hay que listar Drive,
+   descomprimir y parsear XML por cada predio. Por eso nada de esto arranca
+   con la página: se dispara la primera vez que se abre esta pestaña, y la
+   geometría llega por tandas para que el mapa se dibuje mientras baja. */
+const GIS = {
+  estado: 'inactivo',     // inactivo | indice | poligonos | listo | error
+  mapasIniciados: false,
+  pendientes: [],
+  conGeometria: 0,
+  tandaEnCurso: false,
+  ajusteHecho: false,
+  ajusteComunaHecho: false
+};
+
+const GIS_TAMANO_TANDA = 8;
+
+function asegurarTerritorio() {
+  if (!GIS.mapasIniciados) {
+    safeRender(initMap, 'mapa ROL');
+    safeRender(initComunaMap, 'mapa comunas');
+    GIS.mapasIniciados = true;
+  }
+
+  if (MAP) MAP.invalidateSize();
+  if (COMUNA_MAP) COMUNA_MAP.invalidateSize();
+
+  if (GIS.estado === 'inactivo') cargarIndiceRoles(false);
+  else { redrawRoleLayers(); redrawComunaLayers(); }
 }
 
-function loadRoleMapData() {
-  setRoleListLoading();
+function recargarTerritorio() {
+  GIS.estado = 'inactivo';
+  GIS.pendientes = [];
+  GIS.conGeometria = 0;
+  GIS.ajusteHecho = false;
+  GIS.ajusteComunaHecho = false;
+  ROLE_MAP_DATA = [];
+  ROLE_INDEX_BY_KEY = {};
+  cargarIndiceRoles(true);
+}
+
+/* Paso 1: el índice. Solo nombres y volumen, sin abrir un archivo. */
+function cargarIndiceRoles(force) {
+  GIS.estado = 'indice';
+  setText('mapStatus', 'Buscando predios con archivo en Drive');
+  setText('comunaMapStatus', 'Esperando los predios');
+
+  const head = document.getElementById('roleListHead');
+  const list = document.getElementById('roleList');
+  if (head) head.textContent = 'Buscando predios';
+  if (list) list.innerHTML = '<div class="role-empty">Listando los archivos KML y KMZ de la carpeta de Drive.</div>';
 
   google.script.run
-    .withSuccessHandler(response => {
-      const payload = Array.isArray(response)
-        ? { items: response, diagnostics: null }
-        : (response || { items: [], diagnostics: null });
+    .withSuccessHandler(res => {
+      const payload = res || { items: [], diagnostics: null };
 
       ROLE_MAP_DATA = payload.items || [];
       MAP_DIAGNOSTICS = payload.diagnostics || null;
+      ROLE_INDEX_BY_KEY = {};
+      ROLE_MAP_DATA.forEach(item => { ROLE_INDEX_BY_KEY[item.rolKey] = item; });
 
-      const polygonCount = ROLE_MAP_DATA.reduce((sum, item) => sum + ((item.polygons || []).length), 0);
+      // La lista lateral ya se puede usar: tiene predio, proveedor y volumen.
+      // La distancia y el área aparecen cuando llega la geometría.
+      renderRoleList(ROLE_MAP_DATA, 0);
 
-      setText('mapStatus', MAP_DIAGNOSTICS
-        ? polygonCount + ' polígonos · ' + MAP_DIAGNOSTICS.rolesConArchivo + ' roles con archivo · ' +
-          MAP_DIAGNOSTICS.rolesSinArchivo + ' sin archivo'
-        : polygonCount + ' polígonos');
+      if (!ROLE_MAP_DATA.length) {
+        GIS.estado = 'listo';
+        actualizarEstadoGis();
+        return;
+      }
+
+      GIS.estado = 'poligonos';
+      GIS.conGeometria = 0;
+      GIS.pendientes = ROLE_MAP_DATA.map(x => x.rolKey);
+      actualizarEstadoGis();
+      cargarSiguienteTanda();
+    })
+    .withFailureHandler(err => {
+      GIS.estado = 'error';
+      const mensaje = (err && err.message) ? err.message : String(err);
+      setText('mapStatus', 'No se pudo listar la carpeta de Drive');
+      setText('comunaMapStatus', 'Comunas GIS no disponibles');
+
+      const list = document.getElementById('roleList');
+      if (list) {
+        list.innerHTML = '<div class="role-empty">No se pudo leer la carpeta de Drive.<br><b>' +
+          escapeHtml(mensaje) + '</b></div>';
+      }
+
+      console.warn('Índice GIS no disponible', err);
+    })
+    .getRolesIndex(force === true);
+}
+
+/* Paso 2: la geometría, en tandas chicas. Entre tanda y tanda se redibuja,
+   así el mapa se va poblando en vez de aparecer de golpe al final. */
+function cargarSiguienteTanda() {
+  if (GIS.estado !== 'poligonos' || GIS.tandaEnCurso) return;
+
+  if (!GIS.pendientes.length) {
+    GIS.estado = 'listo';
+    // Un redibujo final con el estado ya en 'listo': durante la carga ambos
+    // mapas ceden el texto al contador de progreso, así que si no se vuelve a
+    // pasar por aquí se quedan mostrando la última tanda.
+    redrawRoleLayers();
+    redrawComunaLayers();
+    actualizarEstadoGis();
+    return;
+  }
+
+  const tanda = GIS.pendientes.splice(0, GIS_TAMANO_TANDA);
+  GIS.tandaEnCurso = true;
+
+  google.script.run
+    .withSuccessHandler(res => {
+      GIS.tandaEnCurso = false;
+
+      const polygons = (res && res.polygons) || {};
+
+      Object.keys(polygons).forEach(rolKey => {
+        const item = ROLE_INDEX_BY_KEY[rolKey];
+        if (!item) return;
+        item.polygons = polygons[rolKey];
+        GIS.conGeometria++;
+      });
 
       redrawRoleLayers();
       redrawComunaLayers();
+      actualizarEstadoGis();
+
+      cargarSiguienteTanda();
     })
     .withFailureHandler(err => {
-      setText('mapStatus', 'KML y KMZ no cargados');
-      setText('comunaMapStatus', 'Comunas GIS no cargadas');
-      console.warn('Datos cargados, pero falló el mapa', err);
+      GIS.tandaEnCurso = false;
+      console.warn('Falló una tanda de geometría', err);
+
+      // Una tanda con problemas no detiene el resto: se sigue con la siguiente
+      // y al final el estado dice cuántos predios quedaron sin dibujar.
+      cargarSiguienteTanda();
     })
-    .getRolesMapData();
+    .getRolesPolygons(tanda);
+}
+
+function actualizarEstadoGis() {
+  const total = ROLE_MAP_DATA.length;
+  const diag = MAP_DIAGNOSTICS || {};
+
+  if (GIS.estado === 'poligonos') {
+    setText('mapStatus', 'Cargando geometría ' + GIS.conGeometria + ' de ' + total);
+    setText('comunaMapStatus', 'Agrupando comunas ' + GIS.conGeometria + ' de ' + total);
+    return;
+  }
+
+  if (!total) {
+    setText('mapStatus', diag.rolesEnHoja
+      ? 'Sin coincidencias · ' + diag.rolesEnHoja + ' roles en la hoja · ' +
+        diag.archivosEnCarpeta + ' archivos en Drive'
+      : 'Sin predios con archivo GIS');
+    setText('comunaMapStatus', 'Sin predios GIS para agrupar por comuna');
+    return;
+  }
+
+  const sinGeometria = total - GIS.conGeometria;
+  setText('mapStatus',
+    GIS.conGeometria + ' predios dibujados' +
+    (sinGeometria ? ' · ' + sinGeometria + ' sin geometría legible' : '') +
+    (diag.rolesSinArchivo ? ' · ' + diag.rolesSinArchivo + ' roles sin archivo' : ''));
 }
 
 function initMap() {
@@ -92,6 +225,12 @@ function initComunaMap() {
   COMUNA_LAYER_GROUP = L.layerGroup().addTo(COMUNA_MAP);
 }
 
+// Los filtros cambian el conjunto visible: ahí sí corresponde reencuadrar.
+function reencuadrarMapas() {
+  GIS.ajusteHecho = false;
+  GIS.ajusteComunaHecho = false;
+}
+
 function redrawRoleLayers() {
   if (!MAP || !ROLE_LAYER_GROUP || !DATA) return;
 
@@ -101,12 +240,7 @@ function redrawRoleLayers() {
 
   if (!ROLE_MAP_DATA.length) {
     renderRoleList([], 0);
-    // Sin polígonos el diagnóstico es lo único útil que queda: decir cuántos
-    // roles de la hoja no tienen archivo en Drive, en vez de un cero pelado.
-    setText('mapStatus', MAP_DIAGNOSTICS
-      ? 'Sin polígonos · ' + MAP_DIAGNOSTICS.rolesEnHoja + ' roles en la hoja · ' +
-        MAP_DIAGNOSTICS.rolesSinArchivo + ' sin archivo en Drive'
-      : 'Sin polígonos cargados');
+    actualizarEstadoGis();
     return;
   }
 
@@ -159,9 +293,24 @@ function redrawRoleLayers() {
   });
 
   renderRoleList(visibleItems, visibleCount);
-  setText('mapStatus', visibleCount + ' polígonos visibles · ' + visibleItems.length + ' predios');
 
-  if (ALL_BOUNDS.length) MAP.fitBounds(ALL_BOUNDS, { padding: [20, 20] });
+  // Mientras baja la geometría el estado lo lleva el contador de progreso;
+  // después pasa a describir la vista filtrada.
+  if (GIS.estado === 'poligonos') {
+    actualizarEstadoGis();
+  } else {
+    setText('mapStatus', visibleItems.length + ' predios visibles · ' +
+      visibleCount + ' polígonos' +
+      (hasActiveFilters() ? ' (vista filtrada)' : ''));
+  }
+
+  // Encuadrar en cada tanda haría saltar el mapa mientras el usuario lo mira.
+  // Se encuadra una vez al aparecer la primera geometría, y después solo
+  // cuando cambian los filtros.
+  if (ALL_BOUNDS.length && (GIS.estado !== 'poligonos' || !GIS.ajusteHecho)) {
+    MAP.fitBounds(ALL_BOUNDS, { padding: [20, 20] });
+    GIS.ajusteHecho = true;
+  }
 }
 
 function redrawComunaLayers() {
@@ -170,7 +319,9 @@ function redrawComunaLayers() {
   COMUNA_LAYER_GROUP.clearLayers();
 
   if (!ROLE_MAP_DATA.length) {
-    setText('comunaMapStatus', 'Sin predios GIS para agrupar por comuna');
+    setText('comunaMapStatus', GIS.estado === 'indice'
+      ? 'Esperando los predios'
+      : 'Sin predios GIS para agrupar por comuna');
     return;
   }
 
@@ -201,9 +352,14 @@ function redrawComunaLayers() {
     bounds.push([item.lat, item.lng]);
   });
 
-  setText('comunaMapStatus', comunas.length + ' comunas visibles');
+  if (GIS.estado !== 'poligonos') {
+    setText('comunaMapStatus', comunas.length + ' comunas visibles');
+  }
 
-  if (bounds.length) COMUNA_MAP.fitBounds(bounds, { padding: [35, 35], maxZoom: 11 });
+  if (bounds.length && (GIS.estado !== 'poligonos' || !GIS.ajusteComunaHecho)) {
+    COMUNA_MAP.fitBounds(bounds, { padding: [35, 35], maxZoom: 11 });
+    GIS.ajusteComunaHecho = true;
+  }
 }
 
 function aggregateComunasFromRoles() {

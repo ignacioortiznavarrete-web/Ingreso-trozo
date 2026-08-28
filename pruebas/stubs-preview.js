@@ -7,8 +7,17 @@ window.google.script = {
     const R = window.__RESPUESTAS; let success = null; const api = {};
     Object.keys(R).forEach(fn => {
       api[fn] = function () {
+        const args = Array.prototype.slice.call(arguments);
         const s = success;
-        setTimeout(() => { if (s) s(JSON.parse(JSON.stringify(R[fn]))); }, 60);
+
+        let respuesta = R[fn];
+        if (fn === 'getRolesPolygons') {
+          const out = {};
+          (args[0] || []).forEach(k => { if (R.__poligonos[k]) out[k] = R.__poligonos[k]; });
+          respuesta = { polygons: out, errores: [] };
+        }
+
+        setTimeout(() => { if (s) s(JSON.parse(JSON.stringify(respuesta))); }, 60);
         success = null; return api;
       };
     });
@@ -52,3 +61,27 @@ window.L = {
    no tape el encabezado en la vista previa. */
 window.Swal = { fire(o){ window.__swal.push(o); return Promise.resolve({ isConfirmed:false }); },
                 close(){}, showLoading(){} };
+
+/* Sustituto de Leaflet que reproduce su apilamiento real: los panes usan
+   z-index 200-700 y los controles 800. Sirve para comprobar que el mapa no
+   se dibuja sobre el encabezado pegajoso al hacer scroll. */
+window.L = {
+  map(id) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.innerHTML =
+        '<div class="leaflet-pane" style="position:absolute;inset:0;z-index:400;' +
+        'background:repeating-linear-gradient(45deg,#E8EFE9 0 14px,#DFE9E1 14px 28px)"></div>' +
+        '<div class="leaflet-pane" style="position:absolute;inset:0;z-index:700"></div>' +
+        '<div class="leaflet-control" style="position:absolute;top:10px;left:10px;z-index:800;' +
+        'background:#fff;border:1px solid #ccc;border-radius:4px;padding:2px 7px;font:600 14px sans-serif">+</div>' +
+        '<div style="position:absolute;inset:0;display:grid;place-items:center;z-index:401;' +
+        'color:#52796F;font:600 12px Inter,sans-serif;text-align:center">Mapa Leaflet' +
+        '<br><span style="font-weight:400">simulado: el sandbox no alcanza las teselas</span></div>';
+    }
+    return { setView(){return this;}, remove(){}, invalidateSize(){}, fitBounds(){}, addLayer(){} };
+  },
+  tileLayer: _ml, layerGroup: _ml, polygon: _ml, circleMarker: _ml,
+  control: () => ({ onAdd: null, addTo(){} }),
+  DomUtil: { create: () => document.createElement('div') }
+};

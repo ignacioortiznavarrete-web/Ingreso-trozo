@@ -310,22 +310,28 @@
         <div class="card-head">
           <div>
             <h2 class="section-title">Mapa por ROL</h2>
-            <p class="card-hint">Predios con archivo KML o KMZ en la carpeta de Drive, coloreados por la métrica elegida.</p>
+            <p class="card-hint">
+              Predios con archivo KML o KMZ en la carpeta de Drive, coloreados por la métrica elegida.
+              La geometría se descarga solo al abrir esta pestaña y llega por tandas, para que el resto
+              del dashboard no tenga que esperarla.
+            </p>
           </div>
           <div class="pill-row">
-            <span id="mapStatus" class="pill">Cargando</span>
+            <span id="mapStatus" class="pill">Sin cargar</span>
             <select id="metricMap" style="width:auto" onchange="redrawRoleLayers()" aria-label="Métrica del mapa">
               <option value="cubicacion">Color por cubicación</option>
               <option value="trozos">Color por trozos</option>
               <option value="eficiencia">Color por eficiencia</option>
             </select>
+            <button class="btn-secondary btn-sm" type="button" onclick="recargarTerritorio()"
+                    title="Vuelve a leer la carpeta de Drive y los archivos">Recargar mapas</button>
           </div>
         </div>
         <div class="map-layout">
           <div id="map"></div>
           <aside class="role-list">
-            <div id="roleListHead" class="role-list-head">Cargando predios</div>
-            <div id="roleList"><div class="role-empty">Cargando predios KML y KMZ desde Drive.</div></div>
+            <div id="roleListHead" class="role-list-head">Predios</div>
+            <div id="roleList"><div class="role-empty">Los predios se cargan al abrir esta pestaña.</div></div>
           </aside>
         </div>
       </div>
@@ -337,7 +343,7 @@
             <p class="card-hint">Agrupa los predios GIS visibles por comuna.</p>
           </div>
           <div class="pill-row">
-            <span id="comunaMapStatus" class="pill">Cargando</span>
+            <span id="comunaMapStatus" class="pill">Sin cargar</span>
             <select id="metricComunaMap" style="width:auto" onchange="redrawComunaLayers()" aria-label="Métrica del mapa por comuna">
               <option value="cubicacion">Tamaño por cubicación</option>
               <option value="trozos">Tamaño por trozos</option>

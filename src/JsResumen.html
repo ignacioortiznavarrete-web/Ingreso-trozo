@@ -639,20 +639,19 @@ function buildGeneralRows(rows) {
   }).sort((a, b) => b.cubicacion - a.cubicacion);
 }
 
+// Usa la tabla que envía el servidor: antes había una copia literal aquí que
+// había que acordarse de actualizar en dos archivos a la vez.
 function regionForComunaClient(value) {
-  const key = clean(value);
-  const mapa = {
-    CABRERO: 'Biobío', FLORIDA: 'Biobío', 'LA FLORIDA': 'Biobío', HUALQUI: 'Biobío',
-    LAJA: 'Biobío', 'LOS ANGELES': 'Biobío', PENCO: 'Biobío', QUILLECO: 'Biobío',
-    YUMBEL: 'Biobío', MULCHEN: 'Biobío', ARAUCO: 'Biobío', HUALPEN: 'Biobío',
-    CHILLAN: 'Ñuble', 'CHILLAN VIEJO': 'Ñuble', 'SAN FABIAN': 'Ñuble', 'SAN IGNACIO': 'Ñuble',
-    COIHUECO: 'Ñuble', 'EL CARMEN': 'Ñuble', NINHUE: 'Ñuble', PEMUCO: 'Ñuble',
-    PORTEZUELO: 'Ñuble', QUIRIHUE: 'Ñuble',
-    CAUQUENES: 'Maule', PARRAL: 'Maule', RETIRO: 'Maule',
-    LUMACO: 'La Araucanía', 'LOS SAUCES': 'La Araucanía'
-  };
-  return mapa[key] || 'Sin región asignada';
+  if (!DATA) return 'Sin región asignada';
+
+  const tabla = DATA.regionesPorComuna || {};
+  const abreviaturas = DATA.abreviaturasComuna || {};
+  const bruta = clean(value).replace(/\s+/g, ' ').trim();
+  const clave = abreviaturas[bruta] || bruta;
+
+  return tabla[clave] || 'Sin región asignada';
 }
+
 </script>
 
 <script>

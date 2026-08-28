@@ -31,14 +31,33 @@ window.google = {
       const R = window.__RESPUESTAS;
       let success = null;
       const api = {};
+
+      window.__llamadas = {};
+      window.__lotes = [];
+
       Object.keys(R).forEach(fn => {
         api[fn] = function () {
+          const args = Array.prototype.slice.call(arguments);
           const s = success;
-          setTimeout(() => { if (s) s(JSON.parse(JSON.stringify(R[fn]))); }, 0);
+          window.__llamadas[fn] = (window.__llamadas[fn] || 0) + 1;
+
+          // getRolesPolygons responde según el lote que le pidan, para poder
+          // comprobar que el cliente realmente pagina la geometría.
+          let respuesta = R[fn];
+          if (fn === 'getRolesPolygons') {
+            const pedidos = args[0] || [];
+            window.__lotes.push(pedidos.length);
+            const out = {};
+            pedidos.forEach(k => { if (R.__poligonos[k]) out[k] = R.__poligonos[k]; });
+            respuesta = { polygons: out, errores: [] };
+          }
+
+          setTimeout(() => { if (s) s(JSON.parse(JSON.stringify(respuesta))); }, 0);
           success = null;
           return api;
         };
       });
+
       api.withSuccessHandler = fn => { success = fn; return api; };
       api.withFailureHandler = () => api;
       return api;
@@ -58,6 +77,9 @@ window.L = {
   control: () => ({ onAdd: null, addTo() { if (this.onAdd) this.onAdd(); } }),
   DomUtil: { create: () => document.createElement('div') }
 };
+
+// jsdom no implementa scrollIntoView; en un navegador real existe siempre.
+window.HTMLElement.prototype.scrollIntoView = function () {};
 
 // jsdom no implementa offsetParent: los paneles ocultos deben medir cero para
 // que la lógica "solo dibujo gráficos de la pestaña visible" se pueda probar.

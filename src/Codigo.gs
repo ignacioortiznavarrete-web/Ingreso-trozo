@@ -25,6 +25,14 @@ const CONFIG = {
   // dashboard nuevo se queda sin los campos que espera.
   CACHE_KEY: 'MASISA_DASHBOARD_SUMMARY_V20',
   DETAIL_CACHE_KEY: 'MASISA_DASHBOARD_DETALLE_V20',
+
+  // Agregación por ROL, calculada en la misma pasada que el resumen. Evita que
+  // el módulo GIS tenga que releer la hoja de datos entera por su cuenta.
+  ROLES_CACHE_KEY: 'MASISA_DASHBOARD_ROLES_V20',
+
+  // Índice de predios con archivo en Drive, sin polígonos. Es la llamada
+  // liviana que puebla la lista lateral antes de bajar la geometría.
+  GIS_INDEX_CACHE_KEY: 'MASISA_GIS_INDEX_V20',
   CACHE_SECONDS: 21600,
   CACHE_CHUNK_CHARS: 45000,
   MAX_ROLES_MAPA: 150
@@ -108,34 +116,108 @@ const PROVIDER_ALIASES = {
   'X CUNCO': 'X-CUNCO'
 };
 
+// Las claves van sin tilde y en mayúscula, porque se comparan contra text_().
+// Cubre la zona de abastecimiento: Biobío, Ñuble, Maule y La Araucanía.
 const REGION_BY_COMUNA = {
+  // ── Biobío ──
+  ANTUCO: 'Biobío',
+  ARAUCO: 'Biobío',
   CABRERO: 'Biobío',
+  CANETE: 'Biobío',
+  CHIGUAYANTE: 'Biobío',
+  CONCEPCION: 'Biobío',
+  CONTULMO: 'Biobío',
+  CORONEL: 'Biobío',
+  CURANILAHUE: 'Biobío',
   FLORIDA: 'Biobío',
   'LA FLORIDA': 'Biobío',
+  HUALPEN: 'Biobío',
   HUALQUI: 'Biobío',
   LAJA: 'Biobío',
+  LEBU: 'Biobío',
+  LOTA: 'Biobío',
+  'LOS ALAMOS': 'Biobío',
   'LOS ANGELES': 'Biobío',
+  MULCHEN: 'Biobío',
+  NACIMIENTO: 'Biobío',
+  NEGRETE: 'Biobío',
   PENCO: 'Biobío',
+  QUILACO: 'Biobío',
   QUILLECO: 'Biobío',
+  'SAN PEDRO DE LA PAZ': 'Biobío',
+  'SAN ROSENDO': 'Biobío',
+  'SANTA BARBARA': 'Biobío',
+  'SANTA JUANA': 'Biobío',
+  TALCAHUANO: 'Biobío',
+  TIRUA: 'Biobío',
+  TOME: 'Biobío',
+  TUCAPEL: 'Biobío',
   YUMBEL: 'Biobío',
-  'CHILLAN VIEJO': 'Ñuble',
+
+  // ── Ñuble ──
+  BULNES: 'Ñuble',
   CHILLAN: 'Ñuble',
-  'SAN FABIAN': 'Ñuble',
-  'SAN IGNACIO': 'Ñuble',
+  'CHILLAN VIEJO': 'Ñuble',
+  COBQUECURA: 'Ñuble',
+  COELEMU: 'Ñuble',
   COIHUECO: 'Ñuble',
   'EL CARMEN': 'Ñuble',
   NINHUE: 'Ñuble',
+  NIQUEN: 'Ñuble',
   PEMUCO: 'Ñuble',
+  PINTO: 'Ñuble',
   PORTEZUELO: 'Ñuble',
+  QUILLON: 'Ñuble',
   QUIRIHUE: 'Ñuble',
-  MULCHEN: 'Biobío',
+  RANQUIL: 'Ñuble',
+  'SAN CARLOS': 'Ñuble',
+  'SAN FABIAN': 'Ñuble',
+  'SAN IGNACIO': 'Ñuble',
+  'SAN NICOLAS': 'Ñuble',
+  TREHUACO: 'Ñuble',
+  YUNGAY: 'Ñuble',
+
+  // ── Maule ──
   CAUQUENES: 'Maule',
+  CHANCO: 'Maule',
+  COLBUN: 'Maule',
+  CONSTITUCION: 'Maule',
+  EMPEDRADO: 'Maule',
+  LINARES: 'Maule',
+  LONGAVI: 'Maule',
   PARRAL: 'Maule',
+  PELLUHUE: 'Maule',
   RETIRO: 'Maule',
-  ARAUCO: 'Biobío',
-  HUALPEN: 'Biobío',
+  'SAN JAVIER': 'Maule',
+  VILLA_ALEGRE: 'Maule',
+  YERBAS_BUENAS: 'Maule',
+
+  // ── La Araucanía ──
+  ANGOL: 'La Araucanía',
+  COLLIPULLI: 'La Araucanía',
+  CURACAUTIN: 'La Araucanía',
+  ERCILLA: 'La Araucanía',
+  LONQUIMAY: 'La Araucanía',
+  'LOS SAUCES': 'La Araucanía',
   LUMACO: 'La Araucanía',
-  'LOS SAUCES': 'La Araucanía'
+  PUREN: 'La Araucanía',
+  RENAICO: 'La Araucanía',
+  TRAIGUEN: 'La Araucanía',
+  VICTORIA: 'La Araucanía'
+};
+
+// Abreviaturas que aparecen escritas a mano en la planilla. Se resuelven antes
+// de buscar en la tabla, para no duplicar filas por una forma corta.
+const ABREVIATURAS_COMUNA = {
+  'STA BARBARA': 'SANTA BARBARA',
+  'STA JUANA': 'SANTA JUANA',
+  'STA MARIA': 'SANTA MARIA',
+  'STO DOMINGO': 'SANTO DOMINGO',
+  'SN CARLOS': 'SAN CARLOS',
+  'SN NICOLAS': 'SAN NICOLAS',
+  'SN JAVIER': 'SAN JAVIER',
+  'SAN PEDRO': 'SAN PEDRO DE LA PAZ',
+  CONCE: 'CONCEPCION'
 };
 
 const MASISA_FAENAS = [
@@ -211,6 +293,10 @@ function limpiarCache() {
   const cache = CacheService.getScriptCache();
   clearCacheChunked_(cache, CONFIG.CACHE_KEY);
   clearCacheChunked_(cache, CONFIG.DETAIL_CACHE_KEY);
+  clearCacheChunked_(cache, CONFIG.ROLES_CACHE_KEY);
+  clearCacheChunked_(cache, CONFIG.GIS_INDEX_CACHE_KEY);
+  cache.remove(GIS_FILES_CACHE_KEY);
+  clearCacheChunked_(cache, GIS_CARPETA_CACHE_KEY);
   clearGisCache_(cache);
   SpreadsheetApp.getUi().alert('Caché limpiada correctamente.');
 }
@@ -392,6 +478,19 @@ function getDetalleIngresos(force) {
 function cacheDashboardCore_(cache, built) {
   putCacheChunked_(cache, CONFIG.CACHE_KEY, built.summary, CONFIG.CACHE_SECONDS);
   putCacheChunked_(cache, CONFIG.DETAIL_CACHE_KEY, built.detalle, CONFIG.CACHE_SECONDS);
+  putCacheChunked_(cache, CONFIG.ROLES_CACHE_KEY, built.roles, CONFIG.CACHE_SECONDS);
+}
+
+function getRolesAgg_() {
+  const cache = CacheService.getScriptCache();
+  const cached = getCacheChunked_(cache, CONFIG.ROLES_CACHE_KEY);
+
+  if (cached) return cached;
+
+  const built = buildDashboardCore_();
+  cacheDashboardCore_(cache, built);
+
+  return built.roles;
 }
 
 function buildDashboardCore_() {
@@ -445,6 +544,10 @@ function buildDashboardCore_() {
   // muestra en "Cumplimiento plan proveedores" y en el plan de acción.
   const seriesProveedor = {};
   const mesesEnDatos = {};
+
+  // Agregación por ROL para el mapa. Se calcula aquí, en la única pasada que
+  // ya recorre la hoja, en vez de releerla completa desde el módulo GIS.
+  const rolesAgg = {};
 
   values.slice(1).forEach(row => {
     if (rowEmpty_(row)) return;
@@ -537,6 +640,12 @@ function buildDashboardCore_() {
     });
 
     roles[rol] = true;
+    addRolAgg_(rolesAgg, rol, {
+      comuna: rawText_(row[col.comuna]),
+      region,
+      proveedor: rawText_(row[col.proveedor]),
+      predio: rawText_(row[col.predio])
+    }, cantidad, cubicacion);
 
     const key = diametro + '|' + largo;
 
@@ -660,6 +769,11 @@ function buildDashboardCore_() {
       largoPromedio: x.trozos ? x.largoPonderado / x.trozos : 0
     })).sort((a, b) => b.cubicacion - a.cubicacion),
 
+    // La tabla de regiones viaja al cliente para que no tenga que mantener una
+    // copia propia que se desincronice con la del servidor.
+    regionesPorComuna: REGION_BY_COMUNA,
+    abreviaturasComuna: ABREVIATURAS_COMUNA,
+
     calidades: objectToArray_(calidades, 'calidad'),
     recepciones: recepcionesToArray_(recepciones),
     roles: Object.keys(roles),
@@ -679,7 +793,35 @@ function buildDashboardCore_() {
       .sort((a, b) => a.diametro - b.diametro || a.largo - b.largo)
   };
 
-  return { summary: output, detalle: detalleIngresos };
+  return {
+    summary: output,
+    detalle: detalleIngresos,
+    roles: Object.values(rolesAgg).sort((a, b) => b.cubicacion - a.cubicacion)
+  };
+}
+
+// El ROL identifica al predio: la primera fila que lo trae fija comuna,
+// proveedor y predio, y las siguientes solo acumulan volumen.
+function addRolAgg_(obj, rol, meta, trozos, cubicacion) {
+  const rolKey = roleKey_(rol);
+
+  if (!rolKey) return;
+
+  if (!obj[rolKey]) {
+    obj[rolKey] = {
+      rol: rol,
+      rolKey: rolKey,
+      comuna: meta.comuna,
+      region: meta.region,
+      proveedor: meta.proveedor,
+      predio: meta.predio,
+      trozos: 0,
+      cubicacion: 0
+    };
+  }
+
+  obj[rolKey].trozos += trozos;
+  obj[rolKey].cubicacion += cubicacion;
 }
 
 function addProviderSeriesPoint_(series, proveedor, dia, fecha, trozos, cubicacion) {
@@ -810,128 +952,150 @@ function clearCacheChunked_(cache, key) {
  GIS DATA: KML / KMZ POR ROL
 *******************************************************/
 
-function getRolesMapData() {
-  const sh = getDataSheet_();
-  const values = sh.getDataRange().getValues();
+/*
+ El GIS se sirve en dos llamadas separadas a propósito:
 
-  const response = {
-    items: [],
+   getRolesIndex()     lista los predios que tienen archivo en Drive, con su
+                       volumen. No abre ningún KML ni KMZ, así que responde
+                       rápido y la lista lateral aparece de inmediato.
+
+   getRolesPolygons()  baja la geometría de un lote de roles. El cliente la
+                       pide por tandas, de modo que el mapa se va llenando en
+                       vez de esperar a que estén todos los archivos.
+
+ Antes esto era una sola llamada que releía la hoja de datos completa y abría
+ todos los archivos antes de responder: bloqueaba la carga del dashboard
+ aunque nadie hubiera abierto la pestaña de mapas.
+*/
+
+const GIS_FILES_CACHE_KEY = 'MASISA_GIS_ARCHIVOS_V20';
+const GIS_FILES_CACHE_SECONDS = 21600;
+
+function getRolesIndex(force) {
+  const cache = CacheService.getScriptCache();
+
+  if (!force) {
+    const cached = getCacheChunked_(cache, CONFIG.GIS_INDEX_CACHE_KEY);
+    if (cached) return cached;
+  }
+
+  const index = buildRolesIndex_(cache, force);
+  putCacheChunked_(cache, CONFIG.GIS_INDEX_CACHE_KEY, index, GIS_FILES_CACHE_SECONDS);
+
+  return index;
+}
+
+function buildRolesIndex_(cache, force) {
+  const roles = getRolesAgg_();
+  const filesByRol = getGisFilesByRol_(cache, force);
+
+  const items = [];
+  const archivos = {};
+  let sinArchivo = 0;
+
+  roles.forEach(item => {
+    const archivo = filesByRol[item.rolKey];
+
+    if (!archivo) {
+      sinArchivo++;
+      return;
+    }
+
+    if (items.length >= CONFIG.MAX_ROLES_MAPA) return;
+
+    // El fileId se queda en el servidor: el cliente pide la geometría por
+    // rolKey y nunca puede apuntar la lectura a un archivo arbitrario.
+    archivos[item.rolKey] = archivo.fileId;
+
+    items.push({
+      rol: item.rol,
+      rolKey: item.rolKey,
+      comuna: item.comuna,
+      region: item.region,
+      proveedor: item.proveedor,
+      predio: item.predio,
+      cubicacion: item.cubicacion,
+      trozos: item.trozos,
+      fileName: archivo.fileName,
+      extension: archivo.extension,
+      polygons: []
+    });
+  });
+
+  putCacheSafe_(cache, GIS_FILES_CACHE_KEY, archivos, GIS_FILES_CACHE_SECONDS);
+
+  return {
+    items: items,
     diagnostics: {
-      rolesEnHoja: 0,
-      rolesConArchivo: 0,
-      rolesSinArchivo: 0,
-      archivosEnCarpeta: 0,
+      rolesEnHoja: roles.length,
+      rolesConArchivo: items.length,
+      rolesSinArchivo: sinArchivo,
+      archivosEnCarpeta: Object.keys(filesByRol).length,
+      limiteAlcanzado: roles.length - sinArchivo > CONFIG.MAX_ROLES_MAPA,
       errores: []
     }
   };
+}
 
-  if (values.length < 2) return response;
-
-  const headers = values[0].map(normalize_);
-  const col = getColumns_(headers);
-
-  validateColumns_(col, [
-    'rol',
-    'comuna',
-    'proveedor',
-    'cubicacion',
-    'cantidad',
-    'predio'
-  ]);
-
-  const filesByRol = getGisFilesByRol_();
-  response.diagnostics.archivosEnCarpeta = Object.keys(filesByRol).length;
-
-  const rolesInSheet = {};
-  const rolesWithoutFile = {};
-  const aggByRol = {};
-  let countRoles = 0;
-
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i];
-
-    if (rowEmpty_(row)) continue;
-
-    const rol = rawText_(row[col.rol]);
-    const rolKey = roleKey_(rol);
-
-    if (!rolKey) continue;
-
-    rolesInSheet[rolKey] = rol;
-
-    if (!filesByRol[rolKey]) {
-      rolesWithoutFile[rolKey] = rol;
-      continue;
-    }
-
-    if (!aggByRol[rolKey]) {
-      if (countRoles >= CONFIG.MAX_ROLES_MAPA) continue;
-
-      aggByRol[rolKey] = {
-        rol,
-        rolKey,
-        comuna: rawText_(row[col.comuna]),
-        region: regionForComuna_(row[col.comuna]),
-        proveedor: rawText_(row[col.proveedor]),
-        predio: rawText_(row[col.predio]),
-        cubicacion: 0,
-        trozos: 0,
-        fileId: filesByRol[rolKey].fileId,
-        fileName: filesByRol[rolKey].fileName,
-        originalRoleName: filesByRol[rolKey].originalRoleName,
-        extension: filesByRol[rolKey].extension
-      };
-
-      countRoles++;
-    }
-
-    aggByRol[rolKey].cubicacion += num_(row[col.cubicacion]);
-    aggByRol[rolKey].trozos += num_(row[col.cantidad]);
-  }
-
+// Devuelve la geometría de un lote de roles. El cliente llama esto varias
+// veces con tandas chicas: así ninguna llamada se acerca al tiempo límite y
+// el mapa se puede ir dibujando entre tanda y tanda.
+function getRolesPolygons(rolKeys) {
   const cache = CacheService.getScriptCache();
+  const archivos = getGisArchivos_(cache);
+
+  const out = {};
+  const errores = [];
   const gisCacheKeys = [];
 
-  Object.keys(aggByRol).forEach(rolKey => {
-    const item = aggByRol[rolKey];
+  (rolKeys || []).slice(0, 40).forEach(rolKey => {
+    const fileId = archivos[rolKey];
+
+    if (!fileId) {
+      errores.push('Sin archivo para el ROL ' + rolKey);
+      return;
+    }
 
     try {
-      const file = DriveApp.getFileById(item.fileId);
+      const file = DriveApp.getFileById(fileId);
       const polygons = getCachedPolygonsForFile_(cache, file, gisCacheKeys);
 
       if (!polygons.length) {
-        response.diagnostics.errores.push('Sin polígonos válidos: ' + item.fileName);
+        errores.push('Sin polígonos válidos: ' + file.getName());
         return;
       }
 
-      response.items.push({
-        rol: item.rol,
-        rolKey: item.rolKey,
-        comuna: item.comuna,
-        region: item.region,
-        proveedor: item.proveedor,
-        predio: item.predio,
-        cubicacion: item.cubicacion,
-        trozos: item.trozos,
-        fileName: item.fileName,
-        polygons
-      });
+      out[rolKey] = polygons;
     } catch (err) {
-      const message = 'Error leyendo GIS ROL ' + item.rol + ': ' + err;
-      Logger.log(message);
-      response.diagnostics.errores.push(message);
+      const mensaje = 'Error leyendo GIS del ROL ' + rolKey + ': ' + err;
+      Logger.log(mensaje);
+      errores.push(mensaje);
     }
   });
 
   if (gisCacheKeys.length) {
-    putCacheSafe_(cache, GIS_CACHE_INDEX_KEY, gisCacheKeys, GIS_CACHE_SECONDS);
+    acumularClavesGis_(cache, gisCacheKeys);
   }
 
-  response.diagnostics.rolesEnHoja = Object.keys(rolesInSheet).length;
-  response.diagnostics.rolesConArchivo = Object.keys(aggByRol).length;
-  response.diagnostics.rolesSinArchivo = Object.keys(rolesWithoutFile).length;
+  return { polygons: out, errores: errores };
+}
 
-  return response;
+function getGisArchivos_(cache) {
+  const cached = cache.get(GIS_FILES_CACHE_KEY);
+
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (err) {
+      Logger.log('Índice de archivos GIS ilegible: ' + err);
+    }
+  }
+
+  // La caché expiró entre el índice y la geometría: se reconstruye sola.
+  buildRolesIndex_(cache, false);
+
+  const reintento = cache.get(GIS_FILES_CACHE_KEY);
+  return reintento ? JSON.parse(reintento) : {};
 }
 
 const GIS_CACHE_PREFIX = 'MASISA_GIS_POLY_V1_';
@@ -962,6 +1126,24 @@ function getCachedPolygonsForFile_(cache, file, gisCacheKeysOut) {
   putCacheSafe_(cache, cacheKey, { updated: updatedIso, polygons }, GIS_CACHE_SECONDS);
 
   return polygons;
+}
+
+// Las claves de geometría se acumulan entre tandas. Antes se escribía la
+// lista completa de una vez, porque todo se resolvía en una sola llamada.
+function acumularClavesGis_(cache, nuevasClaves) {
+  let claves = [];
+
+  try {
+    const raw = cache.get(GIS_CACHE_INDEX_KEY);
+    if (raw) claves = JSON.parse(raw) || [];
+  } catch (err) {
+    claves = [];
+  }
+
+  const set = {};
+  claves.concat(nuevasClaves).forEach(k => { set[k] = true; });
+
+  putCacheSafe_(cache, GIS_CACHE_INDEX_KEY, Object.keys(set), GIS_CACHE_SECONDS);
 }
 
 function clearGisCache_(cache) {
@@ -1005,7 +1187,23 @@ function round5_(value) {
   return Math.round(value * 100000) / 100000;
 }
 
-function getGisFilesByRol_() {
+const GIS_CARPETA_CACHE_KEY = 'MASISA_GIS_CARPETA_V20';
+
+function getGisFilesByRol_(cache, force) {
+  cache = cache || CacheService.getScriptCache();
+
+  if (!force) {
+    const cached = getCacheChunked_(cache, GIS_CARPETA_CACHE_KEY);
+    if (cached) return cached;
+  }
+
+  const listado = listarArchivosGis_();
+  putCacheChunked_(cache, GIS_CARPETA_CACHE_KEY, listado, GIS_FILES_CACHE_SECONDS);
+
+  return listado;
+}
+
+function listarArchivosGis_() {
   const folder = DriveApp.getFolderById(GIS_FOLDER_ID);
   const files = folder.getFiles();
   const out = {};
@@ -1748,7 +1946,13 @@ function enrichComunasWithRegion_(arr) {
 }
 
 function regionForComuna_(value) {
-  return REGION_BY_COMUNA[text_(value)] || 'Sin región asignada';
+  const clave = comunaKey_(value);
+  return REGION_BY_COMUNA[clave] || 'Sin región asignada';
+}
+
+function comunaKey_(value) {
+  const clave = text_(value).replace(/\s+/g, ' ').trim();
+  return ABREVIATURAS_COMUNA[clave] || clave;
 }
 
 function providerCanonical_(value) {

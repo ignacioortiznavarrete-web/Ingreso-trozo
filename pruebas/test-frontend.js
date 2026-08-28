@@ -14,10 +14,16 @@ guardarApunte({ proveedor:'D. RODRIGUEZ', pregunta:'Cuando retoma despacho', tip
                 prioridad:'Alta', estado:'En curso', m3:900 });
 const apuntes = getApuntes();
 
+// Índice y geometría reales, producidos por el mismo servidor.
+const indiceGis = getRolesIndex(true);
+const poligonosGis = getRolesPolygons(indiceGis.items.map(i => i.rolKey)).polygons;
+
 const RESPUESTAS = {
   getDashboardData: core.summary,
   getDetalleIngresos: core.detalle,
-  getRolesMapData: { items: [], diagnostics: { rolesEnHoja:5, rolesConArchivo:0, rolesSinArchivo:3, errores:[] } },
+  getRolesIndex: indiceGis,
+  getRolesPolygons: null,          // el stub la resuelve según el lote pedido
+  __poligonos: poligonosGis,
   getApuntes: apuntes,
   guardarApunte: apuntes,
   cambiarEstadoApunte: apuntes,
@@ -112,7 +118,8 @@ setTimeout(() => {
   ok(q('tbody tr', $('tablaRegion')).length >= 2, 'resumen por región');
   ok(q('tbody tr', $('tablaGeneral')).length >= 5, 'tabla general de recepciones');
   ok(q('tbody tr', $('tablaMatriz')).length >= 1, 'matriz diámetro por largo');
-  ok(/3 sin archivo en Drive/.test(txt('mapStatus')), 'el diagnóstico del mapa sobrevive al caso vacío', txt('mapStatus'));
+  ok(win.__llamadas.getRolesIndex === undefined,
+     'los mapas NO se piden en la carga inicial', JSON.stringify(win.__llamadas));
 
   console.log('\n8. Pestañas y dibujo condicional de gráficos');
   ok(q('.tab-panel.is-active').length === 1, 'un solo panel activo', q('.tab-panel.is-active').length);
@@ -165,9 +172,52 @@ setTimeout(() => {
   win.resetFormApunte();
   ok($('apuntePregunta').value === '', 'limpiar el formulario funciona');
 
-  console.log('\n11. Sin errores acumulados');
-  ok(win.__errores.length === 0, 'ninguna excepción en toda la sesión', win.__errores.slice(0,4).join(' | ') || 'ninguna');
+  console.log('\n11. GIS bajo demanda');
+  ok(win.__llamadas.getRolesIndex === undefined, 'sigue sin pedirse antes de abrir Territorio');
+  ok(win.eval('MAP') === null, 'Leaflet ni siquiera se inicializó todavía');
+  ok(/Sin cargar|Sin predios/.test(txt('mapStatus')), 'el estado lo dice', txt('mapStatus'));
 
-  console.log('\n' + (fallos ? fallos + ' PRUEBAS FALLIDAS' : 'TODAS LAS PRUEBAS PASAN'));
-  process.exit(fallos ? 1 : 0);
+  win.activateTab('territorio');
+
+  setTimeout(() => {
+    ok(win.__llamadas.getRolesIndex === 1, 'abrir la pestaña pide el índice una vez',
+       win.__llamadas.getRolesIndex);
+    ok(win.eval('ROLE_MAP_DATA.length') === indiceGis.items.length,
+       'el índice llegó completo', win.eval('ROLE_MAP_DATA.length'));
+    ok(q('.role-item').length === indiceGis.items.length,
+       'la lista lateral se puebla con el índice', q('.role-item').length);
+
+    const tandas = win.__lotes;
+    ok(tandas.length >= 2, 'la geometría se pidió en más de una tanda', JSON.stringify(tandas));
+    ok(tandas.every(n => n <= 8), 'ninguna tanda supera el tamaño configurado', JSON.stringify(tandas));
+    ok(tandas.reduce((a, b) => a + b, 0) === indiceGis.items.length,
+       'entre todas las tandas se pidieron todos los predios, sin repetir',
+       tandas.reduce((a, b) => a + b, 0));
+    ok(win.eval('GIS.conGeometria') === indiceGis.items.length,
+       'todas las tandas se integraron', win.eval('GIS.conGeometria'));
+    ok(win.eval('GIS.estado') === 'listo', 'el estado final es listo', win.eval('GIS.estado'));
+    ok(win.eval('ROLE_MAP_DATA.every(x => x.polygons.length > 0)'),
+       'cada predio quedó con su geometría');
+    ok(/predios dibujados/.test(txt('mapStatus')), 'el estado final lo informa', txt('mapStatus'));
+    ok(/comunas visibles/.test(txt('comunaMapStatus')), 'el mapa de comunas también', txt('comunaMapStatus'));
+    ok(/km/.test($('roleList').textContent), 'la lista ya muestra la distancia a planta');
+    ok(/ha/.test($('roleList').textContent), 'y el área del predio');
+
+    const llamadasAntes = win.__llamadas.getRolesIndex;
+    win.activateTab('resumen');
+    win.activateTab('territorio');
+    ok(win.__llamadas.getRolesIndex === llamadasAntes,
+       'volver a la pestaña no vuelve a bajar todo', win.__llamadas.getRolesIndex);
+
+    console.log('\n12. Sin errores acumulados');
+    ok(win.__errores.length === 0, 'ninguna excepción en toda la sesión',
+       win.__errores.slice(0,4).join(' | ') || 'ninguna');
+
+    console.log('\n' + (fallos ? fallos + ' PRUEBAS FALLIDAS' : 'TODAS LAS PRUEBAS PASAN'));
+    process.exit(fallos ? 1 : 0);
+  }, 1400);
 }, 600);
+
+function seccionErroresAntigua() {
+  console.log('\n11. Sin errores acumulados');
+}

@@ -37,6 +37,10 @@ top 3 y HHI).
 reorganiza el contenido: Resumen, Plan de acción, Territorio, Detalle, Valores
 y Apuntes. Los filtros son compartidos y aplican a todas las pestañas.
 
+**Los mapas ya no frenan la carga.** Los KML y KMZ son lo más caro del
+dashboard: hay que listar Drive, descomprimir y parsear XML por cada predio.
+Ahora nada de eso ocurre al abrir la página. Ver más abajo.
+
 ---
 
 ## Archivos del proyecto
@@ -161,6 +165,52 @@ daño al mes que uno chico al 50%.
 
 ---
 
+## Cómo se cargan los mapas
+
+Antes, abrir el dashboard disparaba una sola llamada que releía la hoja de
+datos completa, listaba Drive y abría todos los archivos antes de responder.
+Esa llamada competía con la carga de los KPIs aunque nadie fuera a mirar el
+mapa. Ahora son tres cambios:
+
+**1. Solo al abrir la pestaña Territorio.** Ni Leaflet se inicializa hasta que
+se entra ahí. El resto del dashboard no espera nada del GIS.
+
+**2. El índice va separado de la geometría.**
+
+| Llamada | Qué devuelve | Costo |
+|---|---|---|
+| `getRolesIndex(force)` | Predios con archivo, con predio, proveedor y volumen. Sin geometría. | Un listado de Drive |
+| `getRolesPolygons(rolKeys)` | La geometría de un lote de roles | Un archivo abierto por rol |
+
+La lista lateral aparece apenas llega el índice y ya es utilizable. La
+distancia a planta y el área se completan cuando baja la geometría.
+
+**3. La geometría llega por tandas de 8.** Entre tanda y tanda el mapa se
+redibuja, así se va poblando en vez de aparecer de golpe al final. Ninguna
+llamada se acerca al tiempo límite de Apps Script, y si una tanda falla las
+demás siguen.
+
+Además, la agregación por ROL se calcula en la misma pasada que arma el
+resumen y queda cacheada, así que construir el índice **ya no relee Hoja 1**.
+Con la caché tibia, abrir el dashboard hace una sola lectura completa de la
+hoja en vez de dos.
+
+El botón **Recargar mapas** fuerza una relectura de la carpeta de Drive, útil
+cuando se agregan archivos nuevos sin querer esperar las 6 horas de caché.
+
+### Ajustar el tamaño de las tandas
+
+En `JsMapas.html`:
+
+```js
+const GIS_TAMANO_TANDA = 8;   // predios por llamada
+```
+
+Subirlo hace menos llamadas pero cada una tarda más; bajarlo da un dibujado
+más progresivo. Con archivos KMZ grandes conviene bajarlo.
+
+---
+
 ## La hoja Apuntes
 
 Se crea sola la primera vez que se guarda un apunte, con listas desplegables y
@@ -220,6 +270,13 @@ una columna por fecha con el número de camiones proyectados.
   mes siguiente apenas cambia el calendario si los datos aún son del mes anterior.
 - **Feriados**: la lista está en `FERIADOS_CHILE` en `Codigo.gs` y llega hasta
   2026. Hay que extenderla cada año.
+- **Comunas**: `REGION_BY_COMUNA` cubre Biobío, Ñuble, Maule y La Araucanía, y
+  `ABREVIATURAS_COMUNA` resuelve las formas cortas que se escriben a mano
+  (`STA BARBARA`, `SN CARLOS`). Una comuna que no esté en la tabla aparece
+  como "Sin región asignada": eso es a propósito, para que una comuna mal
+  escrita en la planilla se note en vez de quedar mapeada a la región
+  equivocada. La tabla viaja al cliente en el payload, así que solo se
+  mantiene en un lugar.
 - **Caché**: 6 horas, troceada para no chocar con el límite de 100 KB por clave
   de `CacheService`. El botón Actualizar la salta.
 - **Resiliencia**: cada bloque se renderiza protegido. Si Leaflet o Google

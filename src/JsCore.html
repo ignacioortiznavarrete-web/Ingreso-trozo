@@ -118,22 +118,21 @@ function loadData(force) {
         safeRender(renderTables, 'tablas');
         safeRender(renderPlanAccion, 'plan de acción');
         safeRender(renderChartsForActiveTab, 'gráficos');
-        safeRender(initMap, 'mapa ROL');
-        safeRender(initComunaMap, 'mapa comunas');
-
-        setText('mapStatus', 'KML y KMZ cargando en segundo plano');
-        setText('comunaMapStatus', 'Comunas GIS cargando en segundo plano');
-        setRoleListLoading();
       } finally {
         Swal.close();
       }
 
       if (window.AUTO_PRESENT && !PRESENT.active) setTimeout(startPresentation, 600);
 
-      // GIS, detalle y apuntes se cargan en paralelo: no bloquean el render.
-      setTimeout(loadRoleMapData, 150);
+      // El detalle y los apuntes se piden en paralelo, sin bloquear el render.
+      // Los KML y KMZ NO: son lo más caro del dashboard y solo hacen falta en
+      // la pestaña Territorio, así que se cargan cuando esa pestaña se abre.
       setTimeout(() => loadDetalleIngresos(force), 150);
       setTimeout(loadApuntes, 200);
+
+      // En modo presentación el mapa forma parte de la rotación, así que
+      // conviene tenerlo listo antes de que le toque el turno.
+      if (window.AUTO_PRESENT) setTimeout(asegurarTerritorio, 3000);
     })
     .withFailureHandler(err => {
       clearTimeout(LOAD_WATCHDOG);
@@ -196,10 +195,9 @@ function activateTab(nombre) {
   requestAnimationFrame(() => {
     safeRender(renderChartsForActiveTab, 'gráficos de pestaña');
 
-    if (nombre === 'territorio') {
-      if (typeof MAP !== 'undefined' && MAP) MAP.invalidateSize();
-      if (typeof COMUNA_MAP !== 'undefined' && COMUNA_MAP) COMUNA_MAP.invalidateSize();
-    }
+    // Primera visita a Territorio: recién aquí se listan los archivos de Drive
+    // y empieza a bajar la geometría.
+    if (nombre === 'territorio') safeRender(asegurarTerritorio, 'territorio');
   });
 }
 
@@ -257,6 +255,7 @@ function renderAllFiltered() {
   safeRender(() => renderTables(stats), 'tablas');
   safeRender(() => renderPlanAccion(stats), 'plan de acción');
   safeRender(() => renderChartsForActiveTab(stats), 'gráficos');
+  safeRender(reencuadrarMapas, 'encuadre de mapas');
   safeRender(redrawRoleLayers, 'mapa ROL');
   safeRender(redrawComunaLayers, 'mapa comunas');
   safeRender(() => actualizarResumenFiltros(stats), 'resumen de filtros');
