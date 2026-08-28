@@ -1,0 +1,1001 @@
+<script>
+/* ══════════════════════════════════════════════════════
+   RESUMEN: KPIs, gráficos y la tabla central de
+   cumplimiento de plan por proveedor.
+══════════════════════════════════════════════════════ */
+
+// cubicacion_desc | cubicacion_asc | cumpl_desc | cumpl_asc |
+// dif_desc | dif_asc | dif_neg | dif_pos | tend_baja
+let COMPLIANCE_SORT = 'cumpl_asc';
+let SOLO_RIESGO = false;
+
+/* ══════════════════════ KPIs ══════════════════════ */
+
+function renderKPIs() {
+  if (!DATA) return;
+
+  const k = DATA.kpis;
+
+  /* ── Fila de decisión ── */
+  const nivelCumpl = nivelPorCumplimiento(k.cumplimientoPlan, k.planAFecha);
+  const tono = (nivelCumpl === 'critico' || nivelCumpl === 'alerta') ? nivelCumpl
+    : (nivelCumpl === 'neutro' ? '' : 'ok');
+
+  setText('kCumplimientoPlan', fmtPercent(k.cumplimientoPlan));
+  setTone('kCumplimientoPlan', tono);
+  setEstadoCard('cardCumplimiento', tono);
+  setText('kCumplimientoPlanLabel',
+    'día hábil ' + fmt0(k.diasHabilesTranscurridos) + ' de ' + fmt0(k.diasHabilesMes) +
+    ' · quedan ' + fmt0(k.diasHabilesFaltantes) + ' hábiles');
+
+  renderProgreso(k);
+
+  const brechaTono = k.diferenciaPlanAFecha < 0 ? 'critico' : 'ok';
+  setText('kDiferenciaPlan', fmtSigned0(k.diferenciaPlanAFecha) + ' m³');
+  setTone('kDiferenciaPlan', brechaTono);
+  setEstadoCard('cardBrecha', brechaTono);
+  setText('kDiferenciaPlanLabel', k.diferenciaPlanAFecha < 0
+    ? 'faltan ' + fmt0(Math.abs(k.diferenciaPlanAFecha)) + ' m³ para estar en línea con el plan'
+    : 'sobre el plan a la fecha');
+
+  // La brecha en m³ es abstracta al teléfono con un proveedor: en camiones y
+  // en días de producción se entiende de inmediato.
+  const m3Camion = Number(k.m3PorCamion) || 26;
+  const camionesBrecha = Math.abs(k.diferenciaPlanAFecha) / m3Camion;
+  const diasBrecha = k.ritmoDiarioActual ? Math.abs(k.diferenciaPlanAFecha) / k.ritmoDiarioActual : 0;
+  setHtml('kDiferenciaPlanFoot',
+    'Equivale a <b>' + fmt(camionesBrecha) + ' camiones</b> de ' + fmt0(m3Camion) + ' m³, o <b>' +
+    fmt(diasBrecha) + ' días</b> al ritmo actual.');
+
+  const esfuerzo = Number(k.esfuerzoAdicional) || 0;
+  const ritmoTono = esfuerzo > 0.25 ? 'critico' : (esfuerzo > 0.05 ? 'alerta' : 'ok');
+
+  setText('kRitmoRequerido', fmt0(k.ritmoRequeridoDia) + ' m³/día');
+  setTone('kRitmoRequerido', k.diasHabilesFaltantes ? ritmoTono : '');
+  setEstadoCard('cardRitmo', k.diasHabilesFaltantes ? ritmoTono : '');
+  setText('kRitmoRequeridoLabel', k.diasHabilesFaltantes
+    ? fmt(k.camionesRequeridosDia) + ' camiones/día durante ' + fmt0(k.diasHabilesFaltantes) +
+      ' días hábiles'
+    : 'el mes ya cerró sus días hábiles');
+
+  setHtml('kRitmoRequeridoFoot', k.diasHabilesFaltantes
+    ? 'Ritmo actual <b>' + fmt0(k.ritmoDiarioActual) + ' m³/día</b> · meta original <b>' +
+      fmt0(k.planDiarioHabil) + ' m³/día</b> · esfuerzo <b>' + fmtSigned0(esfuerzo * 100) + '%</b>'
+    : 'Quedan <b>0</b> días hábiles en el mes.');
+
+  /* ── KPIs de contexto ── */
+  setText('kCub', fmt0(k.totalCubicacion) + ' m³');
+  setText('kCubPlanDetalle',
+    fmt0(k.totalTrozos) + ' trozos · plan a fecha ' + fmt0(k.planAFecha) + ' m³');
+
+  setText('kPlanMes', fmt0(k.planCubicacion) + ' m³');
+  setText('kPlanMesLabel', 'plan ' + (DATA.planMonth || 'mensual') +
+    ' · meta diaria ' + fmt0(k.planDiarioHabil) + ' m³');
+
+  const proyTono = k.cumplimientoProyectado < 0.95 ? 'critico'
+    : (k.cumplimientoProyectado < 1 ? 'alerta' : 'ok');
+  setText('kProyeccionCierre', fmt0(k.proyeccionCierreMes) + ' m³');
+  setTone('kProyeccionCierre', k.planCubicacion ? proyTono : '');
+  setText('kProyeccionCierreLabel',
+    fmtPercent(k.cumplimientoProyectado) + ' del plan · ' +
+    fmtSigned0(k.brechaCierreMes) + ' m³ al cierre');
+
+  const enRiesgo = (Number(k.proveedoresCriticos) || 0) + (Number(k.proveedoresAlerta) || 0);
+  setText('kProveedoresRiesgo', fmt0(enRiesgo));
+  setTone('kProveedoresRiesgo', k.proveedoresCriticos > 0 ? 'critico' : (enRiesgo ? 'alerta' : 'ok'));
+  setText('kProveedoresRiesgoLabel',
+    fmt0(k.proveedoresCriticos) + ' críticos y ' + fmt0(k.proveedoresAlerta) + ' en alerta · ' +
+    fmt0(k.m3EnRiesgo) + ' m³ de brecha acumulada');
+
+  setText('kDiam', fmt(k.diametroPromedio) + ' cm');
+
+  setText('kConcentracion', fmtPercent0(k.concentracionTop3));
+  setText('kConcentracionLabel', (DATA.concentracion && DATA.concentracion.detalle || [])
+    .slice(0, 3).map(x => x.proveedor).join(', ') || 'sin datos');
+
+  renderTopProviderKPI();
+  renderQualityDiameterKPIs(DATA.calidades || []);
+  actualizarContadoresPestanas();
+}
+
+function setEstadoCard(id, estado) {
+  const el = document.getElementById(id);
+  if (el) el.dataset.estado = estado || '';
+}
+
+// Barra de avance del mes: relleno = real sobre el plan del mes; la marca
+// vertical es dónde debería ir hoy según los días hábiles transcurridos.
+function renderProgreso(k) {
+  const planMes = Number(k.planCubicacion) || 0;
+  const real = Number(k.totalCubicacion) || 0;
+
+  const pctReal = planMes ? Math.min(100, (real / planMes) * 100) : 0;
+  const pctMeta = planMes ? Math.min(100, (Number(k.planAFecha) / planMes) * 100) : 0;
+
+  const fill = document.getElementById('progressReal');
+  const marker = document.getElementById('progressMeta');
+
+  if (fill) {
+    fill.style.width = pctReal.toFixed(1) + '%';
+    fill.dataset.estado = real >= Number(k.planAFecha) ? 'ok'
+      : (k.cumplimientoPlan < 0.85 ? 'critico' : 'alerta');
+  }
+
+  if (marker) marker.style.left = pctMeta.toFixed(1) + '%';
+
+  setText('progressLegendReal', fmt0(real) + ' m³ recibidos');
+  setText('progressLegendPlan', 'plan mes ' + fmt0(planMes) + ' m³');
+}
+
+function renderTopProviderKPI() {
+  const top = (DATA.proveedores || [])[0];
+
+  if (!top || !Number(top.cubicacion)) {
+    setText('kProveedorLider', '-');
+    setText('kProveedorLiderLabel', 'sin datos de proveedores este mes');
+    return;
+  }
+
+  setText('kProveedorLider', fmt0(top.cubicacion) + ' m³');
+  setText('kProveedorLiderLabel',
+    top.proveedor + ' · ' + fmtPercent(top.participacionCubicacion) + ' del total');
+}
+
+function renderQualityDiameterKPIs(calidades) {
+  calidades = calidades || buildFilteredStats().calidades || [];
+
+  const byQuality = {};
+  calidades.forEach(item => { byQuality[clean(item.calidad)] = item; });
+
+  const diam = k => byQuality[k] ? byQuality[k].diametroPromedio : 0;
+  const vol = k => byQuality[k] ? byQuality[k].cubicacion : 0;
+
+  setText('kDiamSiniestrado', fmt(diam('SINIESTRADO')) + ' cm');
+  setText('kDiamVerde', fmt(diam('VERDE')) + ' cm');
+  setText('kDiamManchado', fmt(diam('MANCHADO')) + ' cm');
+  setText('kVolSiniestrado', 'm³: ' + fmt0(vol('SINIESTRADO')));
+  setText('kVolVerde', 'm³: ' + fmt0(vol('VERDE')));
+  setText('kVolManchado', 'm³: ' + fmt0(vol('MANCHADO')));
+}
+
+function actualizarContadoresPestanas() {
+  const resumen = (DATA.planAccion && DATA.planAccion.resumen) || {};
+  const enRiesgo = (Number(resumen.criticos) || 0) + (Number(resumen.alerta) || 0);
+
+  const chipPlan = document.getElementById('tabCountPlan');
+  if (chipPlan) {
+    chipPlan.textContent = fmt0(enRiesgo);
+    chipPlan.classList.toggle('alerta', enRiesgo > 0);
+  }
+
+  const abiertos = (APUNTES.resumen && APUNTES.resumen.abiertos) || 0;
+  const chipApuntes = document.getElementById('tabCountApuntes');
+  if (chipApuntes) {
+    chipApuntes.textContent = fmt0(abiertos);
+    chipApuntes.classList.toggle('alerta', ((APUNTES.resumen || {}).vencidos || 0) > 0);
+  }
+}
+
+/* ══════════════════════ TABLAS ══════════════════════ */
+
+function renderTables(stats) {
+  if (!DATA) return;
+  stats = stats || buildFilteredStats();
+
+  renderComplianceTable(stats);
+
+  document.getElementById('tablaCalidad').innerHTML = makeTable(
+    ['Calidad', num('Trozos'), num('m³'), num('% trozos'), num('% m³'), num('Diám. prom.'), num('Eficiencia')],
+    orderQualities(stats.calidades || []).map(x => [
+      escapeHtml(x.calidad),
+      fmt0(x.trozos),
+      fmt0(x.cubicacion),
+      fmtPercent(x.participacionTrozos),
+      fmtPercent(x.participacionCubicacion),
+      fmt(x.diametroPromedio),
+      fmt(x.eficiencia)
+    ]),
+    null,
+    { clase: 'short' }
+  );
+
+  document.getElementById('tablaRegion').innerHTML = makeTable(
+    ['Región', 'Comunas', num('Trozos'), num('m³'), num('% m³'), num('Diám. prom.'), num('Eficiencia')],
+    buildRegionRows(stats.rows).map(x => [
+      escapeHtml(x.region),
+      '<span class="wrap-cell">' + escapeHtml(x.comunas.join(', ')) + '</span>',
+      fmt0(x.trozos),
+      fmt0(x.cubicacion),
+      fmtPercent(x.cubicacion / safe(stats.totalCubicacion)),
+      fmt(x.diametroPromedio),
+      fmt(x.eficiencia)
+    ])
+  );
+
+  const recepcionesTotales = buildGeneralRows(stats.rows);
+  document.getElementById('tablaGeneral').innerHTML = makeTable(
+    ['Proveedor', 'Predio o faena', 'Comuna', 'Calidad', num('Largo'), num('Trozos'),
+     num('m³'), num('Diám. prom.'), num('Eficiencia')],
+    recepcionesTotales.slice(0, 250).map(x => [
+      escapeHtml(x.proveedor), escapeHtml(x.predio), escapeHtml(x.comuna), escapeHtml(x.calidad),
+      fmt(x.largo), fmt0(x.trozos), fmt0(x.cubicacion), fmt(x.diametroPromedio), fmt(x.eficiencia)
+    ]),
+    generalTotalsRow(recepcionesTotales),
+    { clase: 'tall' }
+  );
+
+  renderMatrizTable(stats);
+}
+
+function renderMatrizTable(stats) {
+  const cont = document.getElementById('tablaMatriz');
+  if (!cont) return;
+
+  const filas = hasActiveFilters()
+    ? buildMatrizFromRows(stats.rows)
+    : (DATA.matriz || []);
+
+  cont.innerHTML = makeTable(
+    [num('Diámetro'), num('Largo'), num('Trozos'), num('m³'), num('Eficiencia m³/trozo')],
+    filas.slice(0, 400).map(x => [
+      fmt(x.diametro), fmt(x.largo), fmt0(x.trozos), fmt0(x.cubicacion), fmt(x.eficiencia)
+    ]),
+    null,
+    { clase: 'tall' }
+  );
+}
+
+function buildMatrizFromRows(rows) {
+  const out = {};
+
+  (rows || []).forEach(row => {
+    const key = (Number(row.diametroPromedio) || 0) + '|' + (Number(row.largo) || 0);
+
+    if (!out[key]) {
+      out[key] = { diametro: Number(row.diametroPromedio) || 0, largo: Number(row.largo) || 0, trozos: 0, cubicacion: 0 };
+    }
+
+    out[key].trozos += Number(row.trozos) || 0;
+    out[key].cubicacion += Number(row.cubicacion) || 0;
+  });
+
+  return Object.values(out)
+    .map(x => { x.eficiencia = x.trozos ? x.cubicacion / x.trozos : 0; return x; })
+    .sort((a, b) => a.diametro - b.diametro || a.largo - b.largo);
+}
+
+function generalTotalsRow(rows) {
+  const totals = (rows || []).reduce((acc, x) => {
+    const trozos = Number(x.trozos) || 0;
+    acc.trozos += trozos;
+    acc.cubicacion += Number(x.cubicacion) || 0;
+    acc.diametroPonderado += (Number(x.diametroPromedio) || 0) * trozos;
+    return acc;
+  }, { trozos: 0, cubicacion: 0, diametroPonderado: 0 });
+
+  return [
+    'Total · ' + fmt0((rows || []).length) + ' combinaciones',
+    '', '', '', '',
+    fmt0(totals.trozos),
+    fmt0(totals.cubicacion),
+    fmt(totals.trozos ? totals.diametroPonderado / totals.trozos : 0),
+    fmt(totals.trozos ? totals.cubicacion / totals.trozos : 0)
+  ];
+}
+
+/* ══════════════════════ CUMPLIMIENTO PLAN PROVEEDORES ══════════════════════ */
+
+function renderComplianceTable(stats) {
+  stats = stats || buildFilteredStats();
+
+  const base = buildFilteredCompliance(stats.rows);
+  const filtrada = aplicarFiltroCumplimiento(base);
+  const ordenada = sortCompliance(filtrada, COMPLIANCE_SORT);
+
+  document.getElementById('tablaProveedor').innerHTML = makeComplianceTable(ordenada.slice(0, 120));
+
+  const enRiesgo = base.filter(x => x.plan && x.cumplimiento < 0.85).length;
+  setText('cumplimientoStatus',
+    fmt0(base.length) + ' proveedores · ' + fmt0(enRiesgo) + ' bajo el 85% del plan');
+}
+
+function aplicarFiltroCumplimiento(rows) {
+  let out = rows;
+
+  if (SOLO_RIESGO) out = out.filter(x => Number(x.plan) > 0 && Number(x.diferencia) < -0.01);
+
+  if (COMPLIANCE_SORT === 'dif_neg') out = out.filter(x => (Number(x.diferencia) || 0) < -0.01);
+  if (COMPLIANCE_SORT === 'dif_pos') out = out.filter(x => (Number(x.diferencia) || 0) > 0.01);
+
+  return out;
+}
+
+function toggleSoloRiesgo() {
+  SOLO_RIESGO = !SOLO_RIESGO;
+
+  const btn = document.getElementById('btnSoloRiesgo');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(SOLO_RIESGO));
+    btn.textContent = SOLO_RIESGO ? 'Ver todos' : 'Solo bajo plan';
+  }
+
+  renderComplianceTable();
+}
+
+function sortCompliance(rows, mode) {
+  const pesoTendencia = t => ({ CORTADO: 0, 'SIN INGRESO': 1, BAJA: 2, ESTABLE: 3, SUBE: 4 })[t] ?? 5;
+
+  return [...rows].sort((a, b) => {
+    if (mode === 'cubicacion_desc') return b.cubicacion - a.cubicacion;
+    if (mode === 'cubicacion_asc') return a.cubicacion - b.cubicacion;
+    if (mode === 'cumpl_desc') return b.cumplimiento - a.cumplimiento;
+    if (mode === 'cumpl_asc') return planoPrimero(a, b) || a.cumplimiento - b.cumplimiento;
+    if (mode === 'dif_desc') return b.diferencia - a.diferencia;
+    if (mode === 'dif_asc') return a.diferencia - b.diferencia;
+    if (mode === 'dif_neg') return a.diferencia - b.diferencia;
+    if (mode === 'dif_pos') return b.diferencia - a.diferencia;
+    if (mode === 'tend_baja') return pesoTendencia(a.tendencia) - pesoTendencia(b.tendencia) ||
+      a.cumplimiento - b.cumplimiento;
+    return b.cubicacion - a.cubicacion;
+  });
+}
+
+// Los proveedores con plan van primero: los "sin plan" no compiten por el
+// mismo criterio y ensucian el orden por cumplimiento.
+function planoPrimero(a, b) {
+  if (a.plan && !b.plan) return -1;
+  if (!a.plan && b.plan) return 1;
+  return 0;
+}
+
+function cycleSortCompliance(col) {
+  const modos = {
+    cubicacion: ['cubicacion_desc', 'cubicacion_asc'],
+    cumpl: ['cumpl_asc', 'cumpl_desc'],
+    dif: ['dif_asc', 'dif_desc', 'dif_neg', 'dif_pos'],
+    tend: ['tend_baja']
+  };
+
+  const lista = modos[col];
+  COMPLIANCE_SORT = lista[(lista.indexOf(COMPLIANCE_SORT) + 1) % lista.length] || lista[0];
+
+  renderComplianceTable();
+}
+
+function makeComplianceTable(rows) {
+  if (!rows.length) {
+    return '<div class="table-empty">No hay proveedores que cumplan los filtros actuales.</div>';
+  }
+
+  const cls = prefijo => COMPLIANCE_SORT.startsWith(prefijo)
+    ? (COMPLIANCE_SORT.endsWith('desc') || COMPLIANCE_SORT === 'dif_pos' ? 'sort-desc' : 'sort-asc')
+    : '';
+
+  const difLabel = COMPLIANCE_SORT === 'dif_neg' ? 'Dif. bajo plan'
+    : COMPLIANCE_SORT === 'dif_pos' ? 'Dif. sobre plan'
+    : 'Dif. m³';
+
+  return '<div class="table-wrap tall"><table>' +
+    '<thead><tr>' +
+      '<th>Proveedor</th>' +
+      '<th class="num">Plan mes</th>' +
+      '<th class="num">Plan a fecha</th>' +
+      '<th class="num sortable ' + cls('cubicacion') + '" onclick="cycleSortCompliance(\'cubicacion\')" ' +
+        'title="Ordenar por m³ recibidos">Real m³</th>' +
+      '<th class="num sortable ' + cls('cumpl') + '" onclick="cycleSortCompliance(\'cumpl\')" ' +
+        'title="Ordenar por cumplimiento">Cumpl.</th>' +
+      '<th class="num sortable ' + cls('dif') + '" onclick="cycleSortCompliance(\'dif\')" ' +
+        'title="Clic para ordenar y filtrar por diferencia">' + difLabel + '</th>' +
+      '<th class="sortable ' + cls('tend') + '" onclick="cycleSortCompliance(\'tend\')" ' +
+        'title="Últimos días hábiles contra los anteriores">Tendencia</th>' +
+      '<th>Serie diaria</th>' +
+      '<th class="num">Sin despacho</th>' +
+      '<th class="num">Diám. prom.</th>' +
+      '<th class="num">Precio prom.</th>' +
+      '<th>Apuntes</th>' +
+    '</tr></thead>' +
+    '<tbody>' + rows.map((x, i) => makeComplianceRow(x, i)).join('') + '</tbody>' +
+    '</table></div>';
+}
+
+function makeComplianceRow(x, index) {
+  const canExpand = clean(x.proveedor) === 'MASISA SA' && (x.faenas || []).length;
+  const groupId = 'faenas_' + index;
+
+  const providerCell = canExpand
+    ? '<button class="inline-toggle" type="button" onclick="toggleFaenas(\'' + groupId + '\', this)" ' +
+      'aria-label="Ver faenas">+</button>' + escapeHtml(x.proveedor)
+    : escapeHtml(x.proveedor);
+
+  const children = canExpand
+    ? (x.faenas || []).map(f => makeFaenaRow(f, groupId, x._faenaPrecios || {})).join('')
+    : '';
+
+  const nivel = nivelPorCumplimiento(x.cumplimiento, x.planToDate);
+  const rowClass = nivel === 'critico' ? ' class="row-critico"'
+    : (nivel === 'alerta' ? ' class="row-alerta"' : '');
+
+  const dias = Number(x.diasSinIngreso) || 0;
+  const diasHtml = x.plan || x.cubicacion
+    ? (dias >= 2
+        ? '<b style="color:var(--st-critico)">' + dias + '</b>'
+        : String(dias))
+    : '-';
+
+  return '<tr' + rowClass + '>' +
+    '<td>' + providerCell + '</td>' +
+    '<td class="num">' + fmt0(x.plan) + '</td>' +
+    '<td class="num">' + fmt0(x.planToDate) + '</td>' +
+    '<td class="num">' + fmt0(x.cubicacion) + '</td>' +
+    '<td class="num">' + badge(fmtPercent0(x.cumplimiento), nivel) + '</td>' +
+    '<td class="num">' + fmtSigned0(x.diferencia) + '</td>' +
+    '<td>' + tendenciaHtml(x) + '</td>' +
+    '<td class="spark-cell">' + sparkline(x.serieDiaria, metaDiariaProveedor(x), x.tendencia) + '</td>' +
+    '<td class="num">' + diasHtml + '</td>' +
+    '<td class="num">' + fmt(x.diametroPromedio) + '</td>' +
+    '<td class="num">' + precioCell(x.valorRecepcion, x.m3Valorizados) + '</td>' +
+    '<td>' + apuntesCell(x) + '</td>' +
+    '</tr>' + children;
+}
+
+function makeFaenaRow(faena, groupId, precios) {
+  const stats = (precios || {})[faenaKeyClient(faena.faena)] || { valor: 0, m3: 0 };
+  const nivel = nivelPorCumplimiento(faena.cumplimiento, faena.planToDate);
+
+  return '<tr class="child-row ' + groupId + '" style="display:none">' +
+    '<td>&#8627; ' + escapeHtml(faena.faena || 'SIN FAENA') + '</td>' +
+    '<td class="num">' + fmt0(faena.plan) + '</td>' +
+    '<td class="num">' + fmt0(faena.planToDate) + '</td>' +
+    '<td class="num">' + fmt0(faena.cubicacion) + '</td>' +
+    '<td class="num">' + (faena.planToDate ? badge(fmtPercent0(faena.cumplimiento), nivel) : '-') + '</td>' +
+    '<td class="num">' + fmtSigned0(faena.diferencia) + '</td>' +
+    '<td>-</td><td>-</td><td class="num">-</td>' +
+    '<td class="num">' + fmt(faena.diametroPromedio) + '</td>' +
+    '<td class="num">' + precioCell(stats.valor, stats.m3) + '</td>' +
+    '<td>-</td>' +
+    '</tr>';
+}
+
+function metaDiariaProveedor(x) {
+  const dias = Number(DATA.kpis.diasHabilesMes) || 0;
+  return dias ? (Number(x.plan) || 0) / dias : 0;
+}
+
+function precioCell(valor, m3) {
+  const promedio = m3 ? (Number(valor) || 0) / m3 : 0;
+  return promedio ? fmtCLP(promedio) : '-';
+}
+
+// La celda de apuntes cierra el circuito: muestra cuántas preguntas abiertas
+// hay para ese proveedor y abre el formulario con la pregunta ya redactada.
+function apuntesCell(x) {
+  const resumen = ((APUNTES.resumen || {}).porProveedor || {})[clean(x.proveedor)];
+  const abiertos = resumen ? resumen.abiertos : 0;
+  const pregunta = preguntaParaProveedor(x.proveedor);
+
+  const etiqueta = abiertos
+    ? fmt0(abiertos) + ' abierto' + (abiertos === 1 ? '' : 's')
+    : 'Anotar';
+
+  return '<button class="chip-nota' + (abiertos ? '' : ' vacio') + '" type="button" ' +
+    'onclick="abrirApunteDesdeTabla(' + JSON.stringify(x.proveedor).replace(/"/g, '&quot;') + ', ' +
+    JSON.stringify(pregunta).replace(/"/g, '&quot;') + ')" ' +
+    'title="Abrir el apunte de este proveedor">' + etiqueta + '</button>';
+}
+
+function preguntaParaProveedor(proveedor) {
+  const fila = ((DATA.planAccion || {}).filas || [])
+    .find(f => clean(f.proveedor) === clean(proveedor));
+  return fila ? fila.pregunta : '';
+}
+
+function toggleFaenas(groupId, boton) {
+  let visible = false;
+
+  document.querySelectorAll('.' + groupId).forEach(row => {
+    visible = row.style.display === 'none';
+    row.style.display = visible ? 'table-row' : 'none';
+  });
+
+  if (boton) boton.textContent = visible ? '-' : '+';
+}
+
+/* ══════════════════════ AGREGACIONES CLIENTE ══════════════════════ */
+
+function buildFilteredCompliance(rows) {
+  const base = {};
+
+  // Sin filtros de fila, se parte de la base del servidor: así aparecen los
+  // proveedores con plan que todavía no despachan nada.
+  if (!hasRowLevelFilters()) {
+    (DATA.cumplimientoProveedores || []).forEach(item => {
+      if (!passesProviderPlanFilter(item)) return;
+
+      base[item.proveedor] = {
+        proveedor: item.proveedor,
+        nombrePlan: item.nombrePlan,
+        plan: item.plan,
+        planToDate: item.planToDate,
+        faenas: item.faenas || [],
+        estado: item.estado,
+        tendencia: item.tendencia,
+        variacion: item.variacion,
+        pendiente: item.pendiente,
+        diasSinIngreso: item.diasSinIngreso,
+        regularidad: item.regularidad,
+        serieDiaria: item.serieDiaria || [],
+        ultimaFecha: item.ultimaFecha,
+        trozos: 0,
+        cubicacion: 0,
+        diametroPromedio: 0,
+        cumplimiento: 0,
+        diferencia: 0
+      };
+    });
+  }
+
+  rows.forEach(row => {
+    const proveedor = row.proveedor || 'SIN PROVEEDOR';
+    const trozos = Number(row.trozos) || 0;
+    const cub = Number(row.cubicacion) || 0;
+    const diam = Number(row.diametroPromedio) || 0;
+    const precio = Number(row.precioUnitario) || 0;
+
+    if (!base[proveedor]) {
+      base[proveedor] = {
+        proveedor, nombrePlan: '', plan: 0, planToDate: 0,
+        trozos: 0, cubicacion: 0, diametroPromedio: 0, faenas: [],
+        cumplimiento: 0, diferencia: 0,
+        tendencia: 'SIN DATOS', variacion: 0, diasSinIngreso: 0, serieDiaria: []
+      };
+    }
+
+    base[proveedor].trozos += trozos;
+    base[proveedor].cubicacion += cub;
+    base[proveedor]._diametroPonderado = (base[proveedor]._diametroPonderado || 0) + diam * trozos;
+
+    if (!base[proveedor]._faenaPrecios) base[proveedor]._faenaPrecios = {};
+    const fk = faenaKeyClient(row.predio);
+    if (!base[proveedor]._faenaPrecios[fk]) base[proveedor]._faenaPrecios[fk] = { valor: 0, m3: 0 };
+
+    if (precio) {
+      base[proveedor].valorRecepcion = (base[proveedor].valorRecepcion || 0) + (Number(row.valorTotal) || 0);
+      base[proveedor].m3Valorizados = (base[proveedor].m3Valorizados || 0) + cub;
+      base[proveedor]._faenaPrecios[fk].valor += Number(row.valorTotal) || 0;
+      base[proveedor]._faenaPrecios[fk].m3 += cub;
+    }
+  });
+
+  return Object.values(base)
+    .map(item => {
+      item.diametroPromedio = item.trozos ? (item._diametroPonderado || 0) / item.trozos : 0;
+      item.precioPromedio = item.m3Valorizados ? (item.valorRecepcion || 0) / item.m3Valorizados : 0;
+      item.cumplimiento = item.planToDate ? item.cubicacion / item.planToDate : 0;
+      item.diferencia = item.cubicacion - (Number(item.planToDate) || 0);
+      delete item._diametroPonderado;
+      return item;
+    })
+    .filter(item => item.plan || item.cubicacion || item.trozos)
+    .sort((a, b) => planoPrimero(a, b) || b.cubicacion - a.cubicacion);
+}
+
+function buildRegionRows(rows) {
+  const regions = {};
+
+  (rows || getFilteredDetailRows()).forEach(item => {
+    const region = item.region || regionForComunaClient(item.comuna);
+    const comuna = item.comuna || 'SIN COMUNA';
+    const trozos = Number(item.trozos) || 0;
+    const cub = Number(item.cubicacion) || 0;
+    const diam = Number(item.diametroPromedio) || 0;
+
+    if (!regions[region]) {
+      regions[region] = { region, comunas: [], trozos: 0, cubicacion: 0, diametroPonderado: 0 };
+    }
+
+    regions[region].comunas.push(comuna);
+    regions[region].trozos += trozos;
+    regions[region].cubicacion += cub;
+    regions[region].diametroPonderado += diam * trozos;
+  });
+
+  return Object.values(regions).map(item => {
+    item.comunas = [...new Set(item.comunas)].sort();
+    item.diametroPromedio = item.trozos ? item.diametroPonderado / item.trozos : 0;
+    item.eficiencia = item.trozos ? item.cubicacion / item.trozos : 0;
+    return item;
+  }).sort((a, b) => b.cubicacion - a.cubicacion);
+}
+
+function buildGeneralRows(rows) {
+  const out = {};
+
+  (rows || []).forEach(row => {
+    const key = [row.proveedor || '', row.predio || '', row.comuna || '', row.calidad || '', row.largo || ''].join('|');
+    const t = Number(row.trozos) || 0;
+    const c = Number(row.cubicacion) || 0;
+    const d = Number(row.diametroPromedio) || 0;
+
+    if (!out[key]) {
+      out[key] = {
+        proveedor: row.proveedor || 'SIN PROVEEDOR',
+        predio: row.predio || 'SIN PREDIO',
+        comuna: row.comuna || 'SIN COMUNA',
+        calidad: row.calidad || 'SIN CALIDAD',
+        largo: row.largo || 0,
+        trozos: 0, cubicacion: 0, diametroPonderado: 0
+      };
+    }
+
+    out[key].trozos += t;
+    out[key].cubicacion += c;
+    out[key].diametroPonderado += d * t;
+  });
+
+  return Object.values(out).map(item => {
+    item.diametroPromedio = item.trozos ? item.diametroPonderado / item.trozos : 0;
+    item.eficiencia = item.trozos ? item.cubicacion / item.trozos : 0;
+    return item;
+  }).sort((a, b) => b.cubicacion - a.cubicacion);
+}
+
+function regionForComunaClient(value) {
+  const key = clean(value);
+  const mapa = {
+    CABRERO: 'Biobío', FLORIDA: 'Biobío', 'LA FLORIDA': 'Biobío', HUALQUI: 'Biobío',
+    LAJA: 'Biobío', 'LOS ANGELES': 'Biobío', PENCO: 'Biobío', QUILLECO: 'Biobío',
+    YUMBEL: 'Biobío', MULCHEN: 'Biobío', ARAUCO: 'Biobío', HUALPEN: 'Biobío',
+    CHILLAN: 'Ñuble', 'CHILLAN VIEJO': 'Ñuble', 'SAN FABIAN': 'Ñuble', 'SAN IGNACIO': 'Ñuble',
+    COIHUECO: 'Ñuble', 'EL CARMEN': 'Ñuble', NINHUE: 'Ñuble', PEMUCO: 'Ñuble',
+    PORTEZUELO: 'Ñuble', QUIRIHUE: 'Ñuble',
+    CAUQUENES: 'Maule', PARRAL: 'Maule', RETIRO: 'Maule',
+    LUMACO: 'La Araucanía', 'LOS SAUCES': 'La Araucanía'
+  };
+  return mapa[key] || 'Sin región asignada';
+}
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   GRÁFICOS
+   Se dibujan solo en la pestaña visible: Google Charts mide
+   el contenedor al dibujar y en un panel oculto mide cero.
+══════════════════════════════════════════════════════ */
+
+function renderChartsForActiveTab(stats) {
+  if (!CHART_READY || !DATA) return;
+
+  stats = stats || buildFilteredStats();
+
+  if (ACTIVE_TAB === 'resumen') {
+    drawTimeChart(stats.rows);
+    renderTopProveedoresChart(stats.rows);
+    renderBrechaChart();
+    renderCalidadCharts(stats);
+  }
+
+  if (ACTIVE_TAB === 'valores' && typeof renderValorChart === 'function') {
+    renderValorChart(stats);
+  }
+}
+
+// Alias histórico: el bloque de valores envuelve renderCharts.
+function renderCharts(stats) {
+  renderChartsForActiveTab(stats);
+}
+
+const OPCIONES_BASE = {
+  backgroundColor: 'transparent',
+  fontName: 'Inter',
+  legend: { position: 'none' },
+  tooltip: { textStyle: { fontName: 'Inter', fontSize: 12 } }
+};
+
+function renderCalidadCharts(stats) {
+  const calidades = orderQualities(stats.calidades || []);
+
+  if (!calidades.length) {
+    setChartEmpty('chartCalidadTrozos', 'Sin datos de calidad para los filtros actuales.');
+    setChartEmpty('chartCalidadCubicacion', 'Sin datos de calidad para los filtros actuales.');
+    return;
+  }
+
+  if (isVisible('chartCalidadTrozos')) {
+    const tabla = google.visualization.arrayToDataTable([
+      ['Calidad', 'Trozos', { type: 'string', role: 'style' }, { type: 'string', role: 'annotation' }],
+      ...calidades.map(x => [x.calidad, Number(x.trozos) || 0, qualityColor(x.calidad), fmt0(x.trozos)])
+    ]);
+
+    new google.visualization.BarChart(document.getElementById('chartCalidadTrozos')).draw(tabla, {
+      ...OPCIONES_BASE,
+      chartArea: { width: '68%', height: '78%' },
+      hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
+      vAxis: { textStyle: { color: PALETA.text, fontSize: 12 } },
+      annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+    });
+  }
+
+  if (isVisible('chartCalidadCubicacion')) {
+    const tabla = google.visualization.arrayToDataTable([
+      ['Calidad', 'm³', { type: 'string', role: 'style' }, { type: 'string', role: 'annotation' }],
+      ...calidades.map(x => [x.calidad, Number(x.cubicacion) || 0, qualityColor(x.calidad), fmt0(x.cubicacion)])
+    ]);
+
+    new google.visualization.ColumnChart(document.getElementById('chartCalidadCubicacion')).draw(tabla, {
+      ...OPCIONES_BASE,
+      chartArea: { width: '82%', height: '74%' },
+      vAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
+      hAxis: { textStyle: { color: PALETA.text, fontSize: 12 } },
+      annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+    });
+  }
+}
+
+function renderTopProveedoresChart(rows) {
+  if (!isVisible('chartTopProveedores')) return;
+
+  const agg = {};
+
+  (rows || []).forEach(item => {
+    const key = item.proveedor || 'SIN PROVEEDOR';
+    if (!agg[key]) agg[key] = { proveedor: key, cubicacion: 0 };
+    agg[key].cubicacion += Number(item.cubicacion) || 0;
+  });
+
+  const top = Object.values(agg)
+    .filter(x => x.cubicacion > 0)
+    .sort((a, b) => b.cubicacion - a.cubicacion)
+    .slice(0, 8)
+    .reverse();
+
+  if (!top.length) {
+    setChartEmpty('chartTopProveedores', 'Sin cubicación para graficar.');
+    return;
+  }
+
+  const tabla = google.visualization.arrayToDataTable([
+    ['Proveedor', 'm³', { type: 'string', role: 'annotation' }],
+    ...top.map(x => [x.proveedor, x.cubicacion, fmt0(x.cubicacion)])
+  ]);
+
+  new google.visualization.BarChart(document.getElementById('chartTopProveedores')).draw(tabla, {
+    ...OPCIONES_BASE,
+    chartArea: { width: '56%', height: '86%' },
+    colors: [PALETA.forest2],
+    hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
+    vAxis: { textStyle: { color: PALETA.text, fontSize: 11 } },
+    annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+  });
+}
+
+// Brecha por proveedor: la lectura de compra más directa. Rojo bajo plan,
+// verde sobre plan, mismo semáforo que el resto del dashboard.
+function renderBrechaChart() {
+  if (!isVisible('chartBrecha')) return;
+
+  const filas = ((DATA.planAccion || {}).filas || [])
+    .filter(f => Number(f.plan) > 0 && passesProviderPlanFilter(f))
+    .slice()
+    .sort((a, b) => Math.abs(b.brecha) - Math.abs(a.brecha))
+    .slice(0, 10)
+    .sort((a, b) => a.brecha - b.brecha);
+
+  if (!filas.length) {
+    setChartEmpty('chartBrecha', 'Sin plan cargado para comparar.');
+    return;
+  }
+
+  const tabla = google.visualization.arrayToDataTable([
+    ['Proveedor', 'm³ vs plan a fecha', { type: 'string', role: 'style' }, { type: 'string', role: 'annotation' }],
+    ...filas.map(f => [
+      f.proveedor,
+      Math.round(f.brecha),
+      f.brecha < 0 ? PALETA.critico : PALETA.forest2,
+      fmtSigned0(f.brecha)
+    ])
+  ]);
+
+  new google.visualization.BarChart(document.getElementById('chartBrecha')).draw(tabla, {
+    ...OPCIONES_BASE,
+    chartArea: { width: '56%', height: '86%' },
+    hAxis: {
+      textStyle: { color: PALETA.muted, fontSize: 11 },
+      gridlines: { color: '#EEF2EF' },
+      baselineColor: PALETA.muted
+    },
+    vAxis: { textStyle: { color: PALETA.text, fontSize: 11 } },
+    annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+  });
+}
+
+function drawTimeChart(rows) {
+  if (!isVisible('chartFecha')) return;
+
+  rows = rows || getFilteredDetailRows();
+
+  const realPorDia = {};
+  const valorPorDia = {};
+  const m3ValorizadoPorDia = {};
+  const m3SinPrecioPorDia = {};
+  const proyeccionPorDia = buildProjectionByBusinessDay();
+  let maxDiaConDatos = 0;
+
+  rows.forEach(item => {
+    const dia = Number(item.dia || 0);
+    if (!dia) return;
+
+    const cub = Number(item.cubicacion) || 0;
+    const precio = Number(item.precioUnitario) || 0;
+
+    realPorDia[dia] = (realPorDia[dia] || 0) + cub;
+
+    if (precio) {
+      valorPorDia[dia] = (valorPorDia[dia] || 0) + (Number(item.valorTotal) || 0);
+      m3ValorizadoPorDia[dia] = (m3ValorizadoPorDia[dia] || 0) + cub;
+    } else {
+      m3SinPrecioPorDia[dia] = (m3SinPrecioPorDia[dia] || 0) + cub;
+    }
+
+    maxDiaConDatos = Math.max(maxDiaConDatos, dia);
+  });
+
+  Object.keys(proyeccionPorDia).forEach(dia => {
+    maxDiaConDatos = Math.max(maxDiaConDatos, Number(dia) || 0);
+  });
+
+  const transcurridos = Number(DATA.kpis.diasHabilesTranscurridos || 0);
+  const totalHabiles = Number(DATA.kpis.diasHabilesMes || 0);
+  const diasGrafico = Math.max(totalHabiles, transcurridos, maxDiaConDatos);
+
+  if (!diasGrafico) {
+    setChartEmpty('chartFecha', 'Sin entregas diarias para graficar.');
+    return;
+  }
+
+  const metaDiaria = metaDiariaForFilter();
+  const metaLabel = val('fProveedor') ? 'Meta diaria del proveedor filtrado' : 'Meta diaria hábil';
+
+  // En el eje X va el día calendario (1, 2, 3, 6, 7...) en lugar del
+  // correlativo de día hábil: es como lo lee el equipo de compra.
+  const diaCalendarioPorHabil = {};
+  ((DATA.calendario && DATA.calendario.days) || []).forEach(d => {
+    if (d.habil && d.numHabil) diaCalendarioPorHabil[d.numHabil] = String(d.day);
+  });
+
+  const filas = [];
+
+  for (let dia = 1; dia <= diasGrafico; dia++) {
+    const etiqueta = diaCalendarioPorHabil[dia] || String(dia);
+    const proyeccion = proyeccionPorDia[dia] || 0;
+    const real = realPorDia[dia] || 0;
+
+    const tooltip = buildDayTooltip({
+      label: etiqueta,
+      dia: dia,
+      real: real,
+      proyeccion: proyeccion,
+      meta: metaDiaria,
+      valor: valorPorDia[dia] || 0,
+      m3Valorizado: m3ValorizadoPorDia[dia] || 0,
+      m3SinPrecio: m3SinPrecioPorDia[dia] || 0
+    });
+
+    filas.push([etiqueta, proyeccion, tooltip, real, tooltip, metaDiaria]);
+  }
+
+  const tabla = google.visualization.arrayToDataTable([
+    ['Día del mes',
+     'Proyección camiones m³', { type: 'string', role: 'tooltip', p: { html: true } },
+     'm³ real', { type: 'string', role: 'tooltip', p: { html: true } },
+     metaLabel],
+    ...filas
+  ]);
+
+  new google.visualization.ComboChart(document.getElementById('chartFecha')).draw(tabla, {
+    ...OPCIONES_BASE,
+    legend: { position: 'top', alignment: 'start', textStyle: { color: PALETA.text, fontSize: 11.5 } },
+    colors: ['#DCE5DF', PALETA.forest2, PALETA.critico],
+    seriesType: 'bars',
+    series: { 2: { type: 'line', lineWidth: 2, pointSize: 0, lineDashStyle: [5, 4] } },
+    bar: { groupWidth: '76%' },
+    vAxis: { title: 'm³', minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
+    hAxis: { title: 'Día del mes (solo días hábiles)', textStyle: { fontSize: 10.5, color: PALETA.muted },
+             titleTextStyle: { color: PALETA.muted, italic: false, fontSize: 11 } },
+    tooltip: { isHtml: true },
+    chartArea: { width: '90%', height: '72%' }
+  });
+}
+
+/* Tooltip del gráfico diario: m³, gasto del día y m³ pendientes de valorizar */
+function buildDayTooltip(info) {
+  const li = (label, value, color) =>
+    '<div style="display:flex;justify-content:space-between;gap:18px;line-height:1.7">' +
+    '<span style="color:#738579">' + label + '</span>' +
+    '<b style="color:' + (color || '#24352B') + '">' + value + '</b></div>';
+
+  const partes = [];
+
+  partes.push('<div style="padding:10px 12px;font:400 12px Inter,Arial,sans-serif;color:#24352B;min-width:230px">');
+  partes.push('<div style="font-weight:700;color:#1E4D38;margin-bottom:6px">Día ' +
+    escapeHtml(info.label) + ' · día hábil ' + info.dia + '</div>');
+
+  partes.push(li('m³ real', fmt0(info.real) + ' m³'));
+
+  const valoresListos = (typeof VALORES_STATE !== 'undefined') && VALORES_STATE.ready;
+
+  if (valoresListos && info.real) {
+    const precioDia = info.m3Valorizado ? info.valor / info.m3Valorizado : 0;
+
+    partes.push(li('Gasto del día', fmtCLP(info.valor), '#1E4D38'));
+    partes.push(li('m³ valorizados', fmt0(info.m3Valorizado) + ' m³'));
+
+    if (info.m3SinPrecio > 0.01) {
+      partes.push(li('Falta asignar valor', fmt0(info.m3SinPrecio) + ' m³', '#B3261E'));
+      if (precioDia) {
+        partes.push(li('Estimado pendiente', fmtCLP(info.m3SinPrecio * precioDia), '#C28A22'));
+      }
+    }
+
+    if (precioDia) partes.push(li('Precio promedio', fmtCLP(precioDia) + ' /m³'));
+  }
+
+  const dif = info.real - info.meta;
+  partes.push(li('Meta diaria hábil', fmt0(info.meta) + ' m³'));
+  partes.push(li('Dif. vs meta', fmtSigned0(dif) + ' m³', dif >= 0 ? '#1E4D38' : '#B3261E'));
+
+  if (info.proyeccion) {
+    partes.push(li('Proyección camiones', fmt0(info.proyeccion) + ' m³'));
+  }
+
+  partes.push('</div>');
+
+  return partes.join('');
+}
+
+function getFilteredProjectionRows() {
+  const source = DATA.proyeccionCamiones || [];
+  const fp = val('fProveedor');
+  const fPredio = val('fPredio');
+
+  // La proyección solo tiene proveedor, origen, fecha y camiones. Si se filtra
+  // por comuna, ROL, calidad o largo, no se puede repartir con precisión.
+  if (val('fComuna') || val('fRol') || val('fCalidad') ||
+      clean(document.getElementById('fLargo').value)) return [];
+
+  return source.filter(x => {
+    if (fp && !clean(x.proveedor).includes(fp) && !clean(x.origen).includes(fp)) return false;
+    if (fPredio && !clean(x.origen).includes(fPredio)) return false;
+    return true;
+  });
+}
+
+function buildProjectionByBusinessDay() {
+  const out = {};
+
+  getFilteredProjectionRows().forEach(item => {
+    const dia = Number(item.dia || 0);
+    if (!dia) return;
+    out[dia] = (out[dia] || 0) + (Number(item.cubicacion) || 0);
+  });
+
+  return out;
+}
+
+function metaDiariaForFilter() {
+  const fp = val('fProveedor');
+  const diasHabilesMes = Number(DATA.kpis.diasHabilesMes || 0);
+
+  if (fp && diasHabilesMes) {
+    const matches = (DATA.cumplimientoProveedores || []).filter(passesProviderPlanFilter);
+    if (matches.length === 1) return Number(matches[0].plan || 0) / diasHabilesMes;
+  }
+
+  return Number(DATA.kpis.planDiarioHabil || 0);
+}
+
+function setChartEmpty(id, mensaje) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = '<div class="chart-empty">' + escapeHtml(mensaje) + '</div>';
+}
+</script>

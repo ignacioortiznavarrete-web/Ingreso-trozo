@@ -1,0 +1,383 @@
+<script>
+/* ══════════════════════════════════════════════════════
+   TERRITORIO: mapa por ROL (polígonos KML/KMZ) y mapa
+   analítico por comuna.
+══════════════════════════════════════════════════════ */
+
+let ROLE_MAP_DATA = [];
+let MAP_DIAGNOSTICS = null;
+let MAP = null;
+let ROLE_LAYER_GROUP = null;
+let ROLE_LAYER_INDEX = {};
+let COMUNA_MAP = null;
+let COMUNA_LAYER_GROUP = null;
+let ALL_BOUNDS = [];
+
+function setRoleListLoading() {
+  const head = document.getElementById('roleListHead');
+  const list = document.getElementById('roleList');
+  if (head) head.textContent = 'Cargando predios';
+  if (list) list.innerHTML = '<div class="role-empty">Cargando predios KML y KMZ desde Drive.</div>';
+}
+
+function loadRoleMapData() {
+  setRoleListLoading();
+
+  google.script.run
+    .withSuccessHandler(response => {
+      const payload = Array.isArray(response)
+        ? { items: response, diagnostics: null }
+        : (response || { items: [], diagnostics: null });
+
+      ROLE_MAP_DATA = payload.items || [];
+      MAP_DIAGNOSTICS = payload.diagnostics || null;
+
+      const polygonCount = ROLE_MAP_DATA.reduce((sum, item) => sum + ((item.polygons || []).length), 0);
+
+      setText('mapStatus', MAP_DIAGNOSTICS
+        ? polygonCount + ' polígonos · ' + MAP_DIAGNOSTICS.rolesConArchivo + ' roles con archivo · ' +
+          MAP_DIAGNOSTICS.rolesSinArchivo + ' sin archivo'
+        : polygonCount + ' polígonos');
+
+      redrawRoleLayers();
+      redrawComunaLayers();
+    })
+    .withFailureHandler(err => {
+      setText('mapStatus', 'KML y KMZ no cargados');
+      setText('comunaMapStatus', 'Comunas GIS no cargadas');
+      console.warn('Datos cargados, pero falló el mapa', err);
+    })
+    .getRolesMapData();
+}
+
+function initMap() {
+  if (MAP) MAP.remove();
+
+  MAP = L.map('map', { preferCanvas: true }).setView([-36.7, -72.5], 9);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(MAP);
+
+  ROLE_LAYER_GROUP = L.layerGroup().addTo(MAP);
+  ROLE_LAYER_INDEX = {};
+
+  const legend = L.control({ position: 'bottomright' });
+
+  legend.onAdd = function () {
+    const div = L.DomUtil.create('div', 'legend');
+    div.innerHTML =
+      '<b>Intensidad</b>' +
+      '<div class="legend-item"><span class="legend-color" style="background:' + PALETA.forest + '"></span> Alta</div>' +
+      '<div class="legend-item"><span class="legend-color" style="background:' + PALETA.forest2 + '"></span> Media alta</div>' +
+      '<div class="legend-item"><span class="legend-color" style="background:' + PALETA.forest3 + '"></span> Media</div>' +
+      '<div class="legend-item"><span class="legend-color" style="background:' + PALETA.forest4 + '"></span> Baja</div>';
+    return div;
+  };
+
+  legend.addTo(MAP);
+}
+
+function initComunaMap() {
+  if (COMUNA_MAP) COMUNA_MAP.remove();
+
+  COMUNA_MAP = L.map('comunaMap', { preferCanvas: true }).setView([-36.7, -72.5], 8);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(COMUNA_MAP);
+
+  COMUNA_LAYER_GROUP = L.layerGroup().addTo(COMUNA_MAP);
+}
+
+function redrawRoleLayers() {
+  if (!MAP || !ROLE_LAYER_GROUP || !DATA) return;
+
+  ROLE_LAYER_GROUP.clearLayers();
+  ROLE_LAYER_INDEX = {};
+  ALL_BOUNDS = [];
+
+  if (!ROLE_MAP_DATA.length) {
+    renderRoleList([], 0);
+    // Sin polígonos el diagnóstico es lo único útil que queda: decir cuántos
+    // roles de la hoja no tienen archivo en Drive, en vez de un cero pelado.
+    setText('mapStatus', MAP_DIAGNOSTICS
+      ? 'Sin polígonos · ' + MAP_DIAGNOSTICS.rolesEnHoja + ' roles en la hoja · ' +
+        MAP_DIAGNOSTICS.rolesSinArchivo + ' sin archivo en Drive'
+      : 'Sin polígonos cargados');
+    return;
+  }
+
+  const metric = document.getElementById('metricMap').value;
+  const fp = val('fProveedor'), fPredio = val('fPredio'), fc = val('fComuna'), fr = val('fRol');
+  let visibleCount = 0;
+  const visibleItems = [];
+
+  ROLE_MAP_DATA.forEach(item => {
+    if (fp && !clean(item.proveedor).includes(fp)) return;
+    if (fPredio && !clean(item.predio).includes(fPredio)) return;
+    if (fc && !clean(item.comuna).includes(fc)) return;
+    if (fr && !clean(item.rol).includes(fr)) return;
+
+    const polygons = item.polygons || [];
+    const itemKey = itemKeyForList(item);
+    const center = itemCenter(item);
+    const distanceKm = center ? distanceKmBetween(center, PLANTA_CABRERO) : null;
+
+    ROLE_LAYER_INDEX[itemKey] = { item, layers: [], bounds: [], center, distanceKm };
+    visibleItems.push(item);
+
+    polygons.forEach(coords => {
+      if (!coords.length) return;
+
+      const value = mapValue(item, metric);
+      const color = heat(value);
+      const polygon = L.polygon(coords, { color, fillColor: color, fillOpacity: .46, weight: 1.6 });
+
+      polygon.bindPopup(
+        '<b>ROL:</b> ' + escapeHtml(item.rol || '') + '<br>' +
+        '<b>Predio:</b> ' + escapeHtml(item.predio || '') + '<br>' +
+        '<b>Proveedor:</b> ' + escapeHtml(item.proveedor || '') + '<br>' +
+        '<b>Comuna:</b> ' + escapeHtml(item.comuna || '') + '<br>' +
+        '<b>Región:</b> ' + escapeHtml(item.region || regionForComunaClient(item.comuna)) + '<br>' +
+        '<b>Archivo:</b> ' + escapeHtml(item.fileName || '') + '<br>' +
+        '<b>Distancia a planta:</b> ' + formatDistance(distanceKm) + '<br>' +
+        '<b>Área aprox.:</b> ' + formatArea(itemAreaHectares(item)) + '<br>' +
+        '<b>m³:</b> ' + fmt0(item.cubicacion) + '<br>' +
+        '<b>Trozos:</b> ' + fmt0(item.trozos) + '<br>' +
+        '<b>Eficiencia:</b> ' + fmt((Number(item.cubicacion) || 0) / safe(Number(item.trozos) || 0))
+      );
+
+      polygon.addTo(ROLE_LAYER_GROUP);
+      ROLE_LAYER_INDEX[itemKey].layers.push(polygon);
+      ROLE_LAYER_INDEX[itemKey].bounds.push(...coords);
+      ALL_BOUNDS.push(...coords);
+      visibleCount++;
+    });
+  });
+
+  renderRoleList(visibleItems, visibleCount);
+  setText('mapStatus', visibleCount + ' polígonos visibles · ' + visibleItems.length + ' predios');
+
+  if (ALL_BOUNDS.length) MAP.fitBounds(ALL_BOUNDS, { padding: [20, 20] });
+}
+
+function redrawComunaLayers() {
+  if (!COMUNA_MAP || !COMUNA_LAYER_GROUP || !DATA) return;
+
+  COMUNA_LAYER_GROUP.clearLayers();
+
+  if (!ROLE_MAP_DATA.length) {
+    setText('comunaMapStatus', 'Sin predios GIS para agrupar por comuna');
+    return;
+  }
+
+  const metric = document.getElementById('metricComunaMap').value;
+  const comunas = aggregateComunasFromRoles();
+  const values = comunas.map(x => comunaMetricValue(x, metric));
+  const maxValue = Math.max(...values, 1);
+  const bounds = [];
+
+  comunas.forEach(item => {
+    const value = comunaMetricValue(item, metric);
+    const radius = 8 + (value / maxValue) * 26;
+    const color = heat(value / maxValue);
+    const marker = L.circleMarker([item.lat, item.lng], {
+      radius, color, fillColor: color, fillOpacity: .54, weight: 1.6
+    });
+
+    marker.bindPopup(
+      '<b>Comuna:</b> ' + escapeHtml(item.comuna) + '<br>' +
+      '<b>Región:</b> ' + escapeHtml(item.region || regionForComunaClient(item.comuna)) + '<br>' +
+      '<b>Predios GIS:</b> ' + fmt0(item.predios) + '<br>' +
+      '<b>m³:</b> ' + fmt0(item.cubicacion) + '<br>' +
+      '<b>Trozos:</b> ' + fmt0(item.trozos) + '<br>' +
+      '<b>Promedio m³ por predio:</b> ' + fmt0(item.cubicacion / safe(item.predios))
+    );
+
+    marker.addTo(COMUNA_LAYER_GROUP);
+    bounds.push([item.lat, item.lng]);
+  });
+
+  setText('comunaMapStatus', comunas.length + ' comunas visibles');
+
+  if (bounds.length) COMUNA_MAP.fitBounds(bounds, { padding: [35, 35], maxZoom: 11 });
+}
+
+function aggregateComunasFromRoles() {
+  const fp = val('fProveedor'), fPredio = val('fPredio'), fc = val('fComuna'), fr = val('fRol');
+  const out = {};
+
+  ROLE_MAP_DATA.forEach(item => {
+    if (fp && !clean(item.proveedor).includes(fp)) return;
+    if (fPredio && !clean(item.predio).includes(fPredio)) return;
+    if (fc && !clean(item.comuna || 'SIN COMUNA').includes(fc)) return;
+    if (fr && !clean(item.rol).includes(fr)) return;
+
+    const points = allPolygonPoints(item.polygons || []);
+    if (!points.length) return;
+
+    const center = averagePoint(points);
+    const comunaKey = clean(item.comuna || 'SIN COMUNA');
+
+    if (!out[comunaKey]) {
+      out[comunaKey] = {
+        comuna: item.comuna || 'SIN COMUNA',
+        region: item.region || regionForComunaClient(item.comuna),
+        cubicacion: 0, trozos: 0, predios: 0, latSum: 0, lngSum: 0
+      };
+    }
+
+    out[comunaKey].cubicacion += Number(item.cubicacion) || 0;
+    out[comunaKey].trozos += Number(item.trozos) || 0;
+    out[comunaKey].predios += 1;
+    out[comunaKey].latSum += center.lat;
+    out[comunaKey].lngSum += center.lng;
+  });
+
+  return Object.values(out).map(item => ({
+    ...item,
+    lat: item.latSum / safe(item.predios),
+    lng: item.lngSum / safe(item.predios)
+  })).sort((a, b) => b.cubicacion - a.cubicacion);
+}
+
+function comunaMetricValue(item, metric) {
+  if (metric === 'trozos') return Number(item.trozos) || 0;
+  if (metric === 'predios') return Number(item.predios) || 0;
+  return Number(item.cubicacion) || 0;
+}
+
+function allPolygonPoints(polygons) {
+  return polygons.reduce((pts, p) => pts.concat(p || []), []);
+}
+
+function averagePoint(points) {
+  const sums = points.reduce((acc, c) => {
+    acc.lat += Number(c[0]) || 0;
+    acc.lng += Number(c[1]) || 0;
+    return acc;
+  }, { lat: 0, lng: 0 });
+
+  return { lat: sums.lat / safe(points.length), lng: sums.lng / safe(points.length) };
+}
+
+function renderRoleList(items, polygonCount) {
+  const head = document.getElementById('roleListHead');
+  const list = document.getElementById('roleList');
+  if (!head || !list) return;
+
+  head.textContent = items.length + ' predios · ' + polygonCount + ' polígonos';
+
+  if (!items.length) {
+    list.innerHTML = '<div class="role-empty">No hay predios KML o KMZ visibles con los filtros actuales.</div>';
+    return;
+  }
+
+  list.innerHTML = items.map(item => {
+    const key = escapeHtml(itemKeyForList(item));
+    const record = ROLE_LAYER_INDEX[itemKeyForList(item)];
+    const distance = record ? record.distanceKm : null;
+
+    return '<button class="role-item" type="button" data-role-key="' + key + '" ' +
+      'onclick="focusRoleFromButton(this)">' +
+      '<div class="role-predio">' + escapeHtml(item.predio || 'SIN PREDIO') + '</div>' +
+      '<div class="role-meta">' +
+        '<span>ROL ' + escapeHtml(item.rol || '') + '</span>' +
+        '<span>' + escapeHtml(item.proveedor || '') + '</span>' +
+        '<span>' + escapeHtml(item.region || regionForComunaClient(item.comuna)) +
+          ' · ' + formatDistance(distance) + '</span>' +
+        '<span>' + formatArea(itemAreaHectares(item)) + ' · ' + fmt0(item.cubicacion) + ' m³ · ' +
+          fmt0(item.trozos) + ' trozos</span>' +
+      '</div>' +
+      '</button>';
+  }).join('');
+}
+
+function focusRoleFromButton(button) {
+  focusRole(button.dataset.roleKey || '');
+}
+
+function focusRole(key) {
+  const record = ROLE_LAYER_INDEX[key];
+  if (!record || !record.bounds.length || !MAP) return;
+
+  document.querySelectorAll('.role-item.active').forEach(el => el.classList.remove('active'));
+
+  const button = document.querySelector('.role-item[data-role-key="' + cssEscape(key) + '"]');
+  if (button) {
+    button.classList.add('active');
+    button.scrollIntoView({ block: 'nearest' });
+  }
+
+  MAP.fitBounds(record.bounds, { padding: [35, 35], maxZoom: 15 });
+  if (record.layers.length) record.layers[0].openPopup();
+}
+
+function itemKeyForList(item) {
+  return clean(item.rol) + '|' + clean(item.fileName);
+}
+
+function mapValue(item, metric) {
+  if (metric === 'trozos') return (Number(item.trozos) || 0) / safe(DATA.kpis.totalTrozos);
+  if (metric === 'eficiencia') {
+    const e = (Number(item.cubicacion) || 0) / safe(Number(item.trozos) || 0);
+    return Math.min(e / 0.35, 1);
+  }
+  return (Number(item.cubicacion) || 0) / safe(DATA.kpis.totalCubicacion);
+}
+
+/* ── Geometría ── */
+
+function itemCenter(item) {
+  const points = allPolygonPoints(item.polygons || []);
+  if (!points.length) return null;
+  return averagePoint(points);
+}
+
+function distanceKmBetween(a, b) {
+  if (!a || !b) return null;
+
+  const earthKm = 6371;
+  const dLat = toRadians(b.lat - a.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const lat1 = toRadians(a.lat), lat2 = toRadians(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+
+  return 2 * earthKm * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function toRadians(v) { return Number(v || 0) * Math.PI / 180; }
+
+function formatDistance(v) {
+  return (!v || !isFinite(v)) ? 'Sin coordenadas' : fmt(v) + ' km';
+}
+
+const METERS_PER_DEGREE_LAT = (Math.PI / 180) * 6371000;
+
+function ringAreaHectares(ring) {
+  if (!ring || ring.length < 3) return 0;
+
+  const mpl = METERS_PER_DEGREE_LAT * Math.cos(toRadians(ring[0][0]));
+  let sum = 0;
+
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const xa = (Number(a[1]) || 0) * mpl, ya = (Number(a[0]) || 0) * METERS_PER_DEGREE_LAT;
+    const xb = (Number(b[1]) || 0) * mpl, yb = (Number(b[0]) || 0) * METERS_PER_DEGREE_LAT;
+    sum += xa * yb - xb * ya;
+  }
+
+  return Math.abs(sum) / 2 / 10000;
+}
+
+function itemAreaHectares(item) {
+  return (item.polygons || []).reduce((t, r) => t + ringAreaHectares(r), 0);
+}
+
+function formatArea(v) {
+  return (!v || !isFinite(v)) ? 'Sin datos' : fmt(v) + ' ha';
+}
+</script>

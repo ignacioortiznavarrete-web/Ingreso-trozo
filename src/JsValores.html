@@ -1,0 +1,385 @@
+<script>
+/* ══════════════════════════════════════════════════════
+   VALORES DE RECEPCIÓN
+   Bloque aditivo: envuelve renderTables y los gráficos sin
+   modificarlos. Requiere el archivo Valores.gs.
+══════════════════════════════════════════════════════ */
+
+const VALORES_STATE = {
+  pending: false,
+  ready: false,
+  unidad: 'm3',
+  mensaje: '',
+  diag: null
+};
+
+let VALORES_LAST = null;
+
+function ensureValoresData(force) {
+  const detalle = DATA && DATA.detalleIngresos;
+  if (!detalle || !detalle.length) return;
+  if (VALORES_STATE.pending) return;
+  if (!force && detalle[0].precioUnitario !== undefined) return;
+
+  VALORES_STATE.pending = true;
+  setValorStatus('Consultando la hoja Valores');
+
+  google.script.run
+    .withSuccessHandler(res => {
+      VALORES_STATE.pending = false;
+      if (!res) return;
+
+      VALORES_STATE.ready = true;
+      VALORES_STATE.unidad = res.unidad || 'm3';
+      VALORES_STATE.diag = res.diagnostics || null;
+      VALORES_STATE.mensaje = (res.diagnostics && res.diagnostics.mensaje) || '';
+
+      const detalleActual = (DATA && DATA.detalleIngresos) || [];
+      const precios = res.precios || [];
+
+      if (precios.length !== detalleActual.length) {
+        VALORES_STATE.mensaje = 'Los precios no coinciden con el detalle cargado. Presiona Actualizar.';
+      } else {
+        detalleActual.forEach((row, i) => {
+          const precio = Number(precios[i]) || 0;
+          row.precioUnitario = precio;
+          row.valorTotal = precio
+            ? (VALORES_STATE.unidad === 'trozo'
+                ? precio * (Number(row.trozos) || 0)
+                : precio * (Number(row.cubicacion) || 0))
+            : 0;
+        });
+      }
+
+      renderValoresBlocks();
+      renderValorChart();
+      safeRender(renderComplianceTable, 'cumplimiento');
+    })
+    .withFailureHandler(err => {
+      VALORES_STATE.pending = false;
+      const mensaje = (err && err.message) ? err.message : String(err);
+
+      if (/is not defined|no se encontr|not found|no existe la funci/i.test(mensaje)) {
+        setValorStatus('Falta el archivo Valores.gs en el proyecto de Apps Script.');
+      } else {
+        setValorStatus('Precios no disponibles: ' + mensaje);
+      }
+
+      console.warn('No se pudieron cargar los valores', err);
+    })
+    .getValoresRecepcion(false);
+}
+
+function buildValorStats(rows) {
+  const out = {
+    valor: 0, m3Valorizados: 0, m3SinPrecio: 0,
+    trozosValorizados: 0, trozosSinPrecio: 0, m3Total: 0,
+    proveedores: {}, calidades: {}, sinPrecio: {}
+  };
+
+  (rows || []).forEach(row => {
+    const cub = Number(row.cubicacion) || 0;
+    const trozos = Number(row.trozos) || 0;
+    const precio = Number(row.precioUnitario) || 0;
+    const valor = precio ? (Number(row.valorTotal) || 0) : 0;
+    const proveedor = row.proveedor || 'SIN PROVEEDOR';
+    const calidad = row.calidad || 'SIN CALIDAD';
+
+    out.m3Total += cub;
+
+    if (!out.proveedores[proveedor]) {
+      out.proveedores[proveedor] = {
+        proveedor, valor: 0, m3Valorizados: 0, m3SinPrecio: 0, trozosValorizados: 0
+      };
+    }
+
+    if (!out.calidades[calidad]) {
+      out.calidades[calidad] = { calidad, valor: 0, m3Valorizados: 0, trozosValorizados: 0 };
+    }
+
+    if (precio) {
+      out.valor += valor;
+      out.m3Valorizados += cub;
+      out.trozosValorizados += trozos;
+      out.proveedores[proveedor].valor += valor;
+      out.proveedores[proveedor].m3Valorizados += cub;
+      out.proveedores[proveedor].trozosValorizados += trozos;
+      out.calidades[calidad].valor += valor;
+      out.calidades[calidad].m3Valorizados += cub;
+      out.calidades[calidad].trozosValorizados += trozos;
+    } else {
+      out.m3SinPrecio += cub;
+      out.trozosSinPrecio += trozos;
+      out.proveedores[proveedor].m3SinPrecio += cub;
+
+      const diametro = Number(row.diametroPromedio) || 0;
+      const key = [row.rol || '', Math.round(diametro), row.largo || '', calidad].join('|');
+
+      if (!out.sinPrecio[key]) {
+        out.sinPrecio[key] = {
+          rol: row.rol || 'SIN ROL',
+          predio: row.predio || 'SIN PREDIO',
+          proveedor: proveedor,
+          calidad: calidad,
+          diametro: diametro,
+          largo: Number(row.largo) || 0,
+          clave: claveCompuestaCliente(row.rol, diametro),
+          trozos: 0,
+          cubicacion: 0
+        };
+      }
+
+      out.sinPrecio[key].trozos += trozos;
+      out.sinPrecio[key].cubicacion += cub;
+    }
+  });
+
+  out.precioPromedio = out.m3Valorizados ? out.valor / out.m3Valorizados : 0;
+  out.precioPromedioTrozo = out.trozosValorizados ? out.valor / out.trozosValorizados : 0;
+  out.cobertura = out.m3Total ? out.m3Valorizados / out.m3Total : 0;
+
+  out.proveedoresArray = Object.values(out.proveedores)
+    .map(item => {
+      item.precioPromedio = item.m3Valorizados ? item.valor / item.m3Valorizados : 0;
+      item.participacion = out.valor ? item.valor / out.valor : 0;
+      return item;
+    })
+    .sort((a, b) => b.valor - a.valor);
+
+  out.calidadesArray = Object.values(out.calidades)
+    .map(item => {
+      item.precioPromedio = item.m3Valorizados ? item.valor / item.m3Valorizados : 0;
+      item.participacion = out.valor ? item.valor / out.valor : 0;
+      return item;
+    })
+    .sort((a, b) => b.valor - a.valor);
+
+  out.sinPrecioArray = Object.values(out.sinPrecio).sort((a, b) => b.cubicacion - a.cubicacion);
+
+  return out;
+}
+
+function renderValoresBlocks(stats) {
+  ensureValoresData(false);
+
+  if (!DATA) return;
+
+  if (!VALORES_STATE.ready) {
+    setValorStatus(VALORES_STATE.mensaje || 'Cargando precios');
+    return;
+  }
+
+  stats = stats || buildFilteredStats();
+  const v = buildValorStats(stats.rows || []);
+  VALORES_LAST = v;
+
+  /* ── KPIs ── */
+  setText('kValorTotal', fmtCLP(v.valor));
+  setText('kValorTotalLabel',
+    fmt0(v.m3Valorizados) + ' m³ valorizados · ' + fmt0(v.trozosValorizados) + ' trozos');
+  setText('kPrecioProm', fmtCLP(v.precioPromedio));
+  setText('kPrecioPromLabel',
+    fmtCLP(v.precioPromedioTrozo) + ' por trozo · precio cargado por ' +
+    (VALORES_STATE.unidad === 'trozo' ? 'trozo' : 'm³'));
+  setText('kCoberturaValor', fmtPercent(v.cobertura));
+  setTone('kCoberturaValor', v.cobertura < 0.8 ? 'alerta' : 'ok');
+  setText('kCoberturaValorLabel',
+    fmt0(v.m3Valorizados) + ' de ' + fmt0(v.m3Total) + ' m³ con precio');
+  setText('kM3SinPrecio', fmt0(v.m3SinPrecio) + ' m³');
+  setTone('kM3SinPrecio', v.m3SinPrecio > 0 ? 'alerta' : 'ok');
+  setText('kM3SinPrecioLabel',
+    fmt0(v.sinPrecioArray.length) + ' combinaciones de ROL, calidad y largo sin valor');
+
+  const lider = v.proveedoresArray[0];
+  if (lider && lider.valor) {
+    setText('kValorLider', fmtCLP(lider.valor));
+    setText('kValorLiderLabel', lider.proveedor + ' · ' + fmtPercent(lider.participacion) + ' del valor');
+  } else {
+    setText('kValorLider', '-');
+    setText('kValorLiderLabel', 'sin recepciones valorizadas');
+  }
+
+  /* ── Estado ── */
+  const diag = VALORES_STATE.diag || {};
+  setValorStatus(diag.ok
+    ? fmt0(diag.preciosCargados) + ' precios desde la hoja "' + diag.hoja + '"'
+    : (VALORES_STATE.mensaje || 'Sin precios cargados'));
+
+  const unidadEl = document.getElementById('valorUnidad');
+  if (unidadEl) {
+    const clave = diag.claveUsa || {};
+    const partes = ['ROL'];
+    if (clave.calidad) partes.push('calidad');
+    if (clave.diametro || clave.rangoDiametro) partes.push('diámetro');
+    if (clave.largo) partes.push('largo');
+    unidadEl.textContent = 'Precio por ' + (VALORES_STATE.unidad === 'trozo' ? 'trozo' : 'm³') +
+      ' · clave ' + partes.join(' + ');
+  }
+
+  /* ── Valor por proveedor ── */
+  document.getElementById('tablaValorProveedor').innerHTML = makeTable(
+    ['Proveedor', num('m³ valorizados'), num('Valor'), num('% valor'),
+     num('Precio prom. m³'), num('m³ sin precio')],
+    v.proveedoresArray
+      .filter(x => x.valor || x.m3SinPrecio)
+      .slice(0, 80)
+      .map(x => [
+        escapeHtml(x.proveedor),
+        fmt0(x.m3Valorizados),
+        fmtCLP(x.valor),
+        fmtPercent(x.participacion),
+        fmtCLP(x.precioPromedio),
+        fmt0(x.m3SinPrecio)
+      ]),
+    [
+      'Total · ' + fmt0(v.proveedoresArray.length) + ' proveedores',
+      fmt0(v.m3Valorizados),
+      fmtCLP(v.valor),
+      '100%',
+      fmtCLP(v.precioPromedio),
+      fmt0(v.m3SinPrecio)
+    ]
+  );
+
+  /* ── Precio promedio por calidad ── */
+  document.getElementById('tablaValorCalidad').innerHTML = makeTable(
+    ['Calidad', num('m³ valorizados'), num('Valor'), num('% valor'),
+     num('Precio prom. m³'), num('Precio prom. trozo')],
+    orderQualities(v.calidadesArray)
+      .filter(x => x.valor)
+      .map(x => [
+        escapeHtml(x.calidad),
+        fmt0(x.m3Valorizados),
+        fmtCLP(x.valor),
+        fmtPercent(x.participacion),
+        fmtCLP(x.precioPromedio),
+        fmtCLP(x.trozosValorizados ? x.valor / x.trozosValorizados : 0)
+      ])
+  );
+
+  /* ── Recepciones sin precio ── */
+  document.getElementById('tablaSinPrecio').innerHTML = makeTable(
+    ['ROL', num('Diám.'), 'Clave buscada', 'Predio o faena', 'Proveedor', 'Calidad',
+     num('Largo'), num('Trozos'), num('m³ sin valorizar')],
+    v.sinPrecioArray.slice(0, 200).map(x => [
+      escapeHtml(x.rol),
+      fmt0(x.diametro),
+      '<b>' + escapeHtml(x.clave || '-') + '</b>',
+      escapeHtml(x.predio),
+      escapeHtml(x.proveedor),
+      escapeHtml(x.calidad),
+      fmt(x.largo),
+      fmt0(x.trozos),
+      fmt0(x.cubicacion)
+    ]),
+    [
+      'Total · ' + fmt0(v.sinPrecioArray.length) + ' combinaciones',
+      '', '', '', '', '', '',
+      fmt0(v.trozosSinPrecio),
+      fmt0(v.m3SinPrecio)
+    ],
+    { vacio: 'Todas las recepciones filtradas tienen precio asignado.' }
+  );
+
+  renderValorHint(v);
+}
+
+/* Ayuda visible cuando ninguna clave calza */
+function renderValorHint(v) {
+  const el = document.getElementById('valorHint');
+  if (!el) return;
+
+  const diag = VALORES_STATE.diag || {};
+
+  if (v.m3Valorizados > 0) {
+    el.innerHTML = 'Cruces por clave compuesta: <b>' + fmt0(diag.matchPorClave || 0) +
+      '</b> · por columnas separadas: <b>' + fmt0(diag.matchPorColumnas || 0) + '</b>' +
+      (diag.columnaClave ? ' · columna de clave: <b>' + escapeHtml(diag.columnaClave) + '</b>' : '') +
+      (diag.avisoAmbiguedad ? '<br>' + escapeHtml(diag.avisoAmbiguedad) : '');
+    return;
+  }
+
+  const enHoja = (diag.muestraValores || []).slice(0, 5).join(' · ') || 'sin claves leídas';
+  const generadas = (diag.muestraDetalle || []).slice(0, 5).join(' · ') || 'sin claves generadas';
+
+  el.innerHTML =
+    '<b>Ninguna clave calzó.</b> Compara los ejemplos:<br>' +
+    'Claves en la hoja "' + escapeHtml(diag.hoja || 'Valores') + '": <b>' + escapeHtml(enHoja) + '</b><br>' +
+    'Claves generadas desde Hoja 1 (ROL más diámetro): <b>' + escapeHtml(generadas) + '</b><br>' +
+    'Si los números no coinciden, revisa que la clave de la hoja Valores use el mismo ROL ' +
+    'que Hoja 1 y el diámetro sin decimales.';
+}
+
+/* Misma normalización que claveKey_ del servidor */
+function claveCompuestaCliente(rol, diametro) {
+  const base = String(rol || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+  const d = Number(diametro) || 0;
+  if (!base || !d) return base;
+  return base + String(Math.round(d));
+}
+
+function renderValorChart(stats) {
+  if (!CHART_READY || !DATA || !VALORES_STATE.ready) return;
+  if (!isVisible('chartValorProveedores')) return;
+
+  const v = stats
+    ? buildValorStats(stats.rows || [])
+    : (VALORES_LAST || buildValorStats(buildFilteredStats().rows || []));
+
+  const top = v.proveedoresArray.filter(x => x.valor > 0).slice(0, 8).reverse();
+
+  if (!top.length) {
+    setChartEmpty('chartValorProveedores', 'Sin recepciones valorizadas para graficar.');
+    return;
+  }
+
+  const tabla = google.visualization.arrayToDataTable([
+    ['Proveedor', 'Valor recepción', { type: 'string', role: 'annotation' }],
+    ...top.map(x => [x.proveedor, x.valor, fmtCLP(x.valor)])
+  ]);
+
+  new google.visualization.BarChart(document.getElementById('chartValorProveedores')).draw(tabla, {
+    ...OPCIONES_BASE,
+    chartArea: { width: '56%', height: '86%' },
+    colors: [PALETA.forest],
+    hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
+    vAxis: { textStyle: { color: PALETA.text, fontSize: 11 } },
+    annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+  });
+}
+
+function setValorStatus(mensaje) {
+  const el = document.getElementById('valorStatus');
+  if (el) el.textContent = mensaje;
+}
+
+/* ── Enganche con el dashboard: se envuelven las funciones existentes en
+      vez de modificarlas, para que este bloque siga siendo opcional. ── */
+(function () {
+  const renderTablesOriginal = window.renderTables;
+  const renderChartsOriginal = window.renderChartsForActiveTab;
+
+  window.renderTables = function (stats) {
+    renderTablesOriginal(stats);
+    try {
+      renderValoresBlocks(stats);
+    } catch (err) {
+      console.warn('Error al render de valores:', err);
+    }
+  };
+
+  window.renderChartsForActiveTab = function (stats) {
+    renderChartsOriginal(stats);
+    try {
+      renderValorChart(stats);
+    } catch (err) {
+      console.warn('Error al graficar valores:', err);
+    }
+  };
+})();
+</script>

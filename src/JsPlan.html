@@ -1,0 +1,243 @@
+<script>
+/* ══════════════════════════════════════════════════════
+   PLAN DE ACCIÓN
+   Prioriza a quién llamar hoy: riesgo, brecha, tendencia
+   y cuánto hay que subir el ritmo para llegar al cierre.
+══════════════════════════════════════════════════════ */
+
+let PLAN_FILTRO = '';
+
+function renderPlanAccion() {
+  if (!DATA || !DATA.planAccion) return;
+
+  const plan = DATA.planAccion;
+  const filas = (plan.filas || []).filter(passesProviderPlanFilter);
+
+  renderSemaforo(filas);
+  renderTablaPlan(aplicarFiltroPlan(filas));
+  renderCoberturas((plan.coberturas || []).filter(passesProviderPlanFilter));
+  renderSugerencias(filas);
+  actualizarContadoresPestanas();
+}
+
+/* ══════════════════════ SEMÁFORO ══════════════════════ */
+
+function renderSemaforo(filas) {
+  const cont = document.getElementById('semaforo');
+  if (!cont) return;
+
+  const conteo = { CRITICO: 0, ALERTA: 0, SEGUIMIENTO: 0, OK: 0, 'SOBRE PLAN': 0 };
+  const brecha = { CRITICO: 0, ALERTA: 0, SEGUIMIENTO: 0, OK: 0, 'SOBRE PLAN': 0 };
+
+  filas.forEach(f => {
+    if (conteo[f.nivel] === undefined) return;
+    conteo[f.nivel]++;
+    brecha[f.nivel] += Number(f.brecha) || 0;
+  });
+
+  const bloques = [
+    { nivel: 'critico', clave: 'CRITICO', label: 'Críticos', filtro: 'CRITICO',
+      nota: 'bajo el 60% del plan o sin despacho' },
+    { nivel: 'alerta', clave: 'ALERTA', label: 'En alerta', filtro: 'ALERTA',
+      nota: 'entre 60% y 85% del plan' },
+    { nivel: 'seguimiento', clave: 'SEGUIMIENTO', label: 'Seguimiento', filtro: '',
+      nota: 'entre 85% y 95% del plan' },
+    { nivel: 'ok', clave: 'OK', label: 'En línea', filtro: '',
+      nota: 'entre 95% y 105% del plan' },
+    { nivel: 'sobre', clave: 'SOBRE PLAN', label: 'Sobre plan', filtro: '',
+      nota: 'con margen para cubrir déficit' }
+  ];
+
+  cont.innerHTML = bloques.map(b =>
+    '<button class="semaforo-item" type="button" data-nivel="' + b.nivel + '" ' +
+    'aria-pressed="' + (PLAN_FILTRO === b.filtro && b.filtro !== '') + '" ' +
+    'onclick="filtrarPlan(' + JSON.stringify(b.filtro) + ')">' +
+      '<div class="semaforo-num">' + fmt0(conteo[b.clave]) + '</div>' +
+      '<div class="semaforo-label">' + b.label + '</div>' +
+      '<div class="semaforo-sub">' + escapeHtml(b.nota) + '</div>' +
+      '<div class="semaforo-sub"><b>' + fmtSigned0(brecha[b.clave]) + ' m³</b> vs plan a fecha</div>' +
+    '</button>'
+  ).join('');
+}
+
+/* ══════════════════════ TABLA ══════════════════════ */
+
+function aplicarFiltroPlan(filas) {
+  if (PLAN_FILTRO === 'BAJA') {
+    return filas.filter(f => f.tendencia === 'BAJA' || f.tendencia === 'CORTADO');
+  }
+  if (PLAN_FILTRO) {
+    return filas.filter(f => f.nivel === PLAN_FILTRO);
+  }
+  return filas;
+}
+
+function filtrarPlan(nivel) {
+  PLAN_FILTRO = nivel || '';
+
+  document.querySelectorAll('.segmented button[data-nivel]').forEach(btn => {
+    btn.setAttribute('aria-pressed', String((btn.dataset.nivel || '') === PLAN_FILTRO));
+  });
+
+  renderPlanAccion();
+}
+
+function renderTablaPlan(filas) {
+  const cont = document.getElementById('tablaPlanAccion');
+  if (!cont) return;
+
+  if (!filas.length) {
+    cont.innerHTML = '<div class="table-empty">' +
+      (PLAN_FILTRO
+        ? 'Ningún proveedor cae en esta categoría. Buena señal.'
+        : 'Todavía no hay plan ni ingresos cargados para priorizar.') +
+      '</div>';
+    return;
+  }
+
+  const filasHtml = filas.map(f => {
+    const clase = f.nivel === 'CRITICO' ? ' class="row-critico"'
+      : (f.nivel === 'ALERTA' ? ' class="row-alerta"' : '');
+
+    const nivelClase = claseNivel(f.nivel);
+    const esfuerzo = Number(f.esfuerzoVsRitmoActual) || 0;
+
+    return '<tr' + clase + '>' +
+      '<td>' + riesgoCell(f) + '</td>' +
+      '<td><b>' + escapeHtml(f.proveedor) + '</b><span class="accion-meta">' +
+        badge(f.nivel, nivelClase) + '</span></td>' +
+      '<td class="num">' + fmt0(f.plan) + '</td>' +
+      '<td class="num">' + fmt0(f.cubicacion) + '</td>' +
+      '<td class="num">' + badge(fmtPercent0(f.cumplimiento), nivelPorCumplimiento(f.cumplimiento, f.planToDate)) + '</td>' +
+      '<td class="num">' + fmtSigned0(f.brecha) + '</td>' +
+      '<td>' + tendenciaHtml(f) + '</td>' +
+      '<td class="spark-cell">' + sparkline(f.serieDiaria, metaDiariaPlan(f), f.tendencia) + '</td>' +
+      '<td class="num">' + fmt0(f.ritmoRequeridoDia) + '<span class="accion-meta">' +
+        fmt(f.camionesRequeridosDia) + ' camiones/día' +
+        (esfuerzo > 0 ? ' · ' + fmtSigned0(esfuerzo * 100) + '% de esfuerzo' : '') +
+      '</span></td>' +
+      '<td class="accion-cell">' + escapeHtml(f.accion) + '</td>' +
+      '<td>' + botonApunteRapido(f) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  cont.innerHTML = '<div class="table-wrap tall"><table><thead><tr>' +
+    '<th>Riesgo</th>' +
+    '<th>Proveedor</th>' +
+    '<th class="num">Plan mes</th>' +
+    '<th class="num">Real m³</th>' +
+    '<th class="num">Cumpl.</th>' +
+    '<th class="num">Brecha</th>' +
+    '<th>Tendencia</th>' +
+    '<th>Serie diaria</th>' +
+    '<th class="num">Ritmo requerido</th>' +
+    '<th>Acción sugerida</th>' +
+    '<th>Apunte</th>' +
+    '</tr></thead><tbody>' + filasHtml + '</tbody></table></div>';
+}
+
+function riesgoCell(f) {
+  const riesgo = Number(f.riesgo) || 0;
+  const nivel = riesgo >= 65 ? 'critico' : (riesgo >= 40 ? 'alerta' : 'ok');
+
+  return '<span class="riesgo-bar" title="Riesgo compuesto: brecha, tendencia, días sin despacho y peso en el plan">' +
+    '<span class="riesgo-track"><span class="riesgo-fill" data-nivel="' + nivel + '" ' +
+    'style="width:' + riesgo + '%"></span></span>' +
+    '<b>' + riesgo + '</b></span>';
+}
+
+function metaDiariaPlan(f) {
+  const dias = Number(DATA.kpis.diasHabilesMes) || 0;
+  return dias ? (Number(f.plan) || 0) / dias : 0;
+}
+
+function botonApunteRapido(f) {
+  const resumen = ((APUNTES.resumen || {}).porProveedor || {})[clean(f.proveedor)];
+  const abiertos = resumen ? resumen.abiertos : 0;
+
+  return '<button class="chip-nota' + (abiertos ? '' : ' vacio') + '" type="button" ' +
+    'onclick="abrirApunteDesdeTabla(' + JSON.stringify(f.proveedor).replace(/"/g, '&quot;') + ', ' +
+    JSON.stringify(f.pregunta || '').replace(/"/g, '&quot;') + ')">' +
+    (abiertos ? fmt0(abiertos) + ' abierto' + (abiertos === 1 ? '' : 's') : 'Anotar') +
+    '</button>';
+}
+
+/* ══════════════════════ COBERTURAS ══════════════════════ */
+
+function renderCoberturas(coberturas) {
+  const cont = document.getElementById('tablaCoberturas');
+  if (!cont) return;
+
+  if (!coberturas.length) {
+    cont.innerHTML = '<div class="table-empty">' +
+      'Ningún proveedor viene sobre plan con tendencia estable o al alza. ' +
+      'Si hay déficit, hay que buscarlo fuera de la cartera actual.</div>';
+    return;
+  }
+
+  cont.innerHTML = makeTable(
+    ['Proveedor', num('Excedente m³'), num('Cumpl.'), 'Tendencia', num('Margen camiones/día')],
+    coberturas.map(x => [
+      escapeHtml(x.proveedor),
+      fmtSigned0(x.excedente),
+      fmtPercent0(x.cumplimiento),
+      tendenciaHtml(x),
+      fmt(x.margenCamionesDia)
+    ]),
+    null,
+    { clase: 'short' }
+  );
+}
+
+/* ══════════════════════ PREGUNTAS SUGERIDAS ══════════════════════ */
+
+// Cada pregunta nace del comportamiento del proveedor en el mes. Guardarla
+// la escribe en la hoja Apuntes con el contexto del momento (cumplimiento y
+// tendencia), para que después se pueda leer en qué escenario se preguntó.
+function renderSugerencias(filas) {
+  const cont = document.getElementById('sugerencias');
+  if (!cont) return;
+
+  const candidatas = filas
+    .filter(f => f.pregunta && (f.nivel === 'CRITICO' || f.nivel === 'ALERTA' ||
+      f.tendencia === 'BAJA' || f.tendencia === 'CORTADO'))
+    .sort((a, b) => b.riesgo - a.riesgo)
+    .slice(0, 8);
+
+  if (!candidatas.length) {
+    cont.innerHTML = '<div class="empty-state">' +
+      '<b>Nada urgente que preguntar</b>' +
+      'Ningún proveedor está bajo alerta ni viene a la baja. ' +
+      'Igual puedes registrar un apunte manual desde la pestaña Apuntes.' +
+      '</div>';
+    return;
+  }
+
+  cont.innerHTML = candidatas.map(f => {
+    const yaExiste = ((APUNTES.resumen || {}).porProveedor || {})[clean(f.proveedor)];
+    const abiertos = yaExiste ? yaExiste.abiertos : 0;
+
+    return '<div class="sugerencia">' +
+      '<div class="sugerencia-meta">' +
+        badge(f.nivel, claseNivel(f.nivel)) +
+        '<b style="font-size:12.5px;color:var(--forest)">' + escapeHtml(f.proveedor) + '</b>' +
+        tendenciaHtml(f) +
+        (abiertos ? '<span class="chip-nota">' + fmt0(abiertos) + ' apunte' +
+          (abiertos === 1 ? '' : 's') + ' abierto' + (abiertos === 1 ? '' : 's') + '</span>' : '') +
+      '</div>' +
+      '<div class="sugerencia-texto">' + escapeHtml(f.pregunta) + '</div>' +
+      '<div class="sugerencia-meta">' +
+        '<button class="btn-primary btn-sm" type="button" onclick="guardarSugerencia(' +
+          JSON.stringify(f.proveedor).replace(/"/g, '&quot;') + ', ' +
+          JSON.stringify(f.pregunta).replace(/"/g, '&quot;') + ', ' +
+          (Number(f.cumplimiento) || 0) + ', ' +
+          JSON.stringify(f.tendencia || '').replace(/"/g, '&quot;') + ', ' +
+          JSON.stringify(f.nivel || '').replace(/"/g, '&quot;') + ')">Guardar en apuntes</button>' +
+        '<button class="btn-secondary btn-sm" type="button" onclick="abrirApunteDesdeTabla(' +
+          JSON.stringify(f.proveedor).replace(/"/g, '&quot;') + ', ' +
+          JSON.stringify(f.pregunta).replace(/"/g, '&quot;') + ')">Editar antes de guardar</button>' +
+      '</div>' +
+      '</div>';
+  }).join('');
+}
+</script>

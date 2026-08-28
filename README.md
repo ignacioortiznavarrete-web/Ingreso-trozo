@@ -1,0 +1,226 @@
+# Dashboard de ingreso de trozo
+
+Dashboard de Google Apps Script para el control de abastecimiento de trozo:
+cruza los ingresos de la planilla contra el plan mensual, calcula la tendencia
+día a día de cada proveedor y arma el plan de acción de compra.
+
+---
+
+## Qué se agregó en esta versión
+
+**Pestaña Plan de acción.** Prioriza a quién llamar hoy. Cada proveedor recibe
+un puntaje de riesgo de 0 a 100 que pondera cuatro cosas: cuánto falta contra
+el plan a fecha, hacia dónde va la tendencia, hace cuántos días hábiles que no
+despacha y cuánto pesa dentro del plan del mes. Con eso genera un semáforo de
+cinco niveles, una acción sugerida concreta y la pregunta que hay que llevar a
+la llamada.
+
+**Tendencia día a día en la tabla de cumplimiento.** La tabla central ahora
+muestra, por proveedor: si sube o baja (últimos días hábiles contra los
+anteriores), un sparkline de la serie diaria con la meta como referencia, y
+cuántos días hábiles lleva sin despachar. Un proveedor que cumple el plan pero
+viene cayendo tres días seguidos deja de ser invisible.
+
+**Bitácora de apuntes.** Una hoja `Apuntes` en la misma planilla guarda la
+pregunta, la respuesta, el responsable, la fecha comprometida y los m³ que el
+proveedor comprometió. Se escribe desde el dashboard o a mano en la planilla.
+La columna de apuntes de la tabla de cumplimiento muestra cuántos hay abiertos
+por proveedor y abre el formulario con la pregunta ya redactada.
+
+**KPIs de compra.** Además del cumplimiento, ahora calcula el ritmo requerido
+para cerrar el mes (en m³ y en camiones por día hábil restante), el esfuerzo
+adicional que eso significa sobre el ritmo actual, los m³ de brecha acumulada,
+los proveedores en riesgo y la concentración del suministro (participación del
+top 3 y HHI).
+
+**Rediseño en seis pestañas.** Se conserva la paleta verde original y se
+reorganiza el contenido: Resumen, Plan de acción, Territorio, Detalle, Valores
+y Apuntes. Los filtros son compartidos y aplican a todas las pestañas.
+
+---
+
+## Archivos del proyecto
+
+El código está en `src/`. En Apps Script cada archivo se agrega con el mismo
+nombre y el tipo que indica la tabla.
+
+| Archivo | Tipo en Apps Script | Obligatorio | Qué hace |
+|---|---|---|---|
+| `Codigo.gs` | Secuencia de comandos | Sí | Núcleo: lee las hojas, arma el payload, caché, GIS |
+| `Analisis.gs` | Secuencia de comandos | Sí | Tendencia día a día, riesgo y plan de acción |
+| `Apuntes.gs` | Secuencia de comandos | Sí | Bitácora de preguntas y compromisos |
+| `Index.html` | HTML | Sí | Armazón de la página |
+| `Estilos.html` | HTML | Sí | Sistema de diseño |
+| `JsCore.html` | HTML | Sí | Estado, carga, pestañas, filtros, formato |
+| `JsResumen.html` | HTML | Sí | KPIs, tabla de cumplimiento y gráficos |
+| `JsPlan.html` | HTML | Sí | Pestaña Plan de acción |
+| `JsApuntes.html` | HTML | Sí | Pestaña Apuntes |
+| `JsMapas.html` | HTML | Sí | Mapas por ROL y por comuna |
+| `JsValores.html` | HTML | Sí | Bloque de precios de recepción |
+| `JsPresentacion.html` | HTML | Sí | Modo presentación y envío a Slides |
+| `JsInit.html` | HTML | Sí | Arranque |
+| `Valores.gs` | Secuencia de comandos | No | Precios de recepción (cruce con la hoja de valores) |
+| `Slides.gs` | Secuencia de comandos | No | Envío de gráficos a Google Slides |
+| `appsscript.json` | Manifiesto | No | Zona horaria y permisos |
+
+Los dos archivos opcionales se pueden omitir: el dashboard detecta que no
+están y esconde o desactiva solo esas funciones.
+
+---
+
+## Instalación
+
+1. Abre la planilla y entra a **Extensiones → Apps Script**.
+2. Crea cada archivo de la tabla anterior con el mismo nombre, sin la
+   extensión (Apps Script la agrega solo). Pega el contenido de `src/`.
+3. Guarda, selecciona la función **onOpen** y presiona **Ejecutar**.
+4. Acepta los permisos que pida Google.
+5. Recarga la planilla. En el menú aparece **MASISA GIS**.
+
+Si actualizas desde una versión anterior, usa **MASISA GIS → Limpiar caché**
+después de pegar los archivos. Las claves de caché cambiaron de versión, así
+que la caché vieja se descarta sola, pero limpiarla evita cualquier duda.
+
+### Como aplicación web
+
+**Implementar → Nueva implementación → Aplicación web**. El parámetro
+`?present=1` en la URL abre el dashboard directo en modo presentación, útil
+para dejarlo en una pantalla de sala.
+
+---
+
+## Configuración
+
+En `Codigo.gs`, al inicio:
+
+```js
+const CONFIG = {
+  SPREADSHEET_ID: '...',              // planilla de datos
+  SHEET_NAME: 'Hoja 1',               // ingresos
+  PLAN_SHEET_NAME: 'Hoja 2',          // plan mensual por proveedor
+  PROJECTION_SHEET_NAME: 'ProyeccionCamiones',
+  NOTES_SHEET_NAME: 'Apuntes',
+  M3_PER_CAMION: 26,                  // conversión camión a m³
+  CACHE_SECONDS: 21600                // 6 horas
+};
+```
+
+En `Analisis.gs` se ajusta la sensibilidad del análisis:
+
+```js
+const ANALISIS_CONFIG = {
+  VENTANA_COMPARACION: 3,        // días hábiles de cada mitad de la comparación
+  VENTANA_PENDIENTE: 6,          // días hábiles para la regresión
+  UMBRAL_VARIACION: 0.15,        // variación mínima para no ser "estable"
+  DIAS_SIN_INGRESO_ALERTA: 2,
+  DIAS_SIN_INGRESO_CRITICO: 4,   // a partir de aquí la tendencia es "cortado"
+  CORTE_CRITICO: 0.60,           // cortes de cumplimiento a fecha
+  CORTE_ALERTA: 0.85,
+  CORTE_SEGUIMIENTO: 0.95,
+  CORTE_SOBRE_PLAN: 1.05
+};
+```
+
+---
+
+## Cómo se calcula la tendencia
+
+Para cada proveedor se arma una serie con un punto por día hábil transcurrido
+del mes. Los días sin despacho se rellenan con cero a propósito: un día en
+blanco es información, no un hueco.
+
+Sobre esa serie se calculan tres cosas:
+
+- **Variación**: suma de los últimos 3 días hábiles contra los 3 anteriores.
+- **Pendiente**: regresión lineal por mínimos cuadrados sobre los últimos 6
+  días hábiles, en m³ por día.
+- **Días sin ingreso**: días hábiles desde el último despacho.
+
+Con eso se clasifica:
+
+| Tendencia | Condición |
+|---|---|
+| `CORTADO` | 4 o más días hábiles sin despachar |
+| `BAJA` | variación bajo -15%, o pendiente bajo -1 m³/día |
+| `SUBE` | variación sobre +15%, o pendiente sobre +1 m³/día |
+| `ESTABLE` | el resto, con al menos 2 días de despacho |
+| `SIN INGRESO` | no ha despachado nada en el mes |
+
+### Puntaje de riesgo
+
+```
+riesgo = 45 x déficit de cumplimiento
+       + 25 cortado / 22 sin ingreso / 20 a la baja / 6 estable
+       + 18 x (días sin despacho / 4, tope 1)
+       + 12 x (peso en el plan / 15%, tope 1)
+       +  5 si despachó en menos del 40% de los días hábiles
+```
+
+El peso en el plan es deliberado: un proveedor grande al 80% del plan hace más
+daño al mes que uno chico al 50%.
+
+---
+
+## La hoja Apuntes
+
+Se crea sola la primera vez que se guarda un apunte, con listas desplegables y
+formato condicional por estado. Columnas:
+
+| Columna | Contenido |
+|---|---|
+| ID | Identificador generado (`AP260828-131500-742`) |
+| Fecha registro | Cuándo se anotó |
+| Mes plan | Mes del plan al que corresponde |
+| Proveedor / Faena | A quién apunta |
+| Tipo | Pregunta, Compromiso, Riesgo, Reclamo, Nota |
+| Prioridad | Alta, Media, Baja |
+| Pregunta u observación | Lo que hay que preguntar o dejar registrado |
+| Respuesta / acuerdo | Lo que respondió el proveedor |
+| Responsable | Quién hace seguimiento |
+| Fecha compromiso | Para cuándo quedó |
+| m³ comprometidos | Volumen comprometido |
+| Estado | Abierto, En curso, Cerrado |
+| Cumplimiento al registrar | Foto del cumplimiento en ese momento |
+| Tendencia al registrar | Foto de la tendencia en ese momento |
+| Origen | Dashboard, Sugerencia automática, Menú planilla |
+
+Las dos columnas de "al registrar" existen para poder leer después en qué
+escenario se hizo la pregunta, no solo qué se preguntó.
+
+Se puede escribir directo en la hoja: el dashboard la lee sin caché, así que
+lo que se anota aparece de inmediato.
+
+---
+
+## Estructura que espera de la planilla
+
+**Hoja 1 (ingresos).** Los encabezados se buscan por nombre, sin importar el
+orden ni las mayúsculas: `Fecha`, `Proveedor`, `Predio`, `Comuna`, `Rol`,
+`Cal Trz`, `Calidad`, `Diametro`, `Largo`, `Cantidad`, `Cubicacion`.
+
+La calidad se deriva de `Cal Trz`: `1` siniestrado, `2` verde, `3` manchado.
+
+**Hoja 2 (plan).** Una columna `Proveedores`, opcionalmente `Origen` para las
+faenas de MASISA, y una columna por mes (`ago-26`, o una fecha con formato
+`mmm-yyyy`). Las filas que empiezan con `Total` se ignoran.
+
+**ProyeccionCamiones.** Proveedor en la columna A, origen en la B, y desde la C
+una columna por fecha con el número de camiones proyectados.
+
+> El dashboard asume que la Hoja 1 contiene **solo el mes en curso**. Si
+> detecta varios meses lo avisa en un banner, porque en ese caso los m³ de los
+> otros meses inflan el cumplimiento contra un plan que es mensual.
+
+---
+
+## Notas de operación
+
+- **Fecha de referencia**: todo se calcula sobre la fecha del último ingreso
+  cargado, no sobre la fecha real de hoy. Así el dashboard no salta al plan del
+  mes siguiente apenas cambia el calendario si los datos aún son del mes anterior.
+- **Feriados**: la lista está en `FERIADOS_CHILE` en `Codigo.gs` y llega hasta
+  2026. Hay que extenderla cada año.
+- **Caché**: 6 horas, troceada para no chocar con el límite de 100 KB por clave
+  de `CacheService`. El botón Actualizar la salta.
+- **Resiliencia**: cada bloque se renderiza protegido. Si Leaflet o Google
+  Charts no cargan, los KPIs y las tablas funcionan igual.

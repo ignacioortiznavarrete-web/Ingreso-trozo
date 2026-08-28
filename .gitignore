@@ -1,0 +1,5 @@
+node_modules/
+preview.html
+shot-*.png
+*.log
+.clasp.json

@@ -1,0 +1,36 @@
+<script>
+/* ══════════════════════════════════════════════════════
+   ARRANQUE
+   Los datos se piden PRIMERO: aunque falle una librería
+   externa, los KPIs y tablas cargan igual.
+══════════════════════════════════════════════════════ */
+
+window.AUTO_PRESENT = false;
+
+loadData(false);
+
+// La librería de gráficos se carga en paralelo, sin bloquear la petición.
+try {
+  google.charts.load('current', { packages: ['corechart', 'bar'] });
+  google.charts.setOnLoadCallback(() => {
+    CHART_READY = true;
+    if (DATA) renderChartsForActiveTab();
+  });
+} catch (err) {
+  console.warn('Google Charts no disponible:', err);
+  window.mostrarErrorFatal('no se pudo cargar la librería de gráficos de Google');
+}
+
+// El enlace "en vivo" para presentaciones se abre con ?present=1. Se detecta
+// con la API oficial de Apps Script, de forma asíncrona y tolerante a fallas.
+try {
+  if (google.script && google.script.url && google.script.url.getLocation) {
+    google.script.url.getLocation(loc => {
+      window.AUTO_PRESENT = Boolean(loc && loc.parameter && loc.parameter.present);
+      if (window.AUTO_PRESENT && DATA && !PRESENT.active) startPresentation();
+    });
+  }
+} catch (err) {
+  console.warn('No se pudo leer la URL:', err);
+}
+</script>

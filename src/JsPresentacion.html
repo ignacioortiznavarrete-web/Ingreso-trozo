@@ -1,0 +1,269 @@
+<script>
+/* ══════════════════════════════════════════════════════
+   MODO PRESENTACIÓN Y ENVÍO A SLIDES
+   Rota por las secciones clave cambiando de pestaña sola,
+   y refresca los datos en vivo cada 10 minutos.
+══════════════════════════════════════════════════════ */
+
+const PRESENT = {
+  active: false,
+  paused: false,
+  slideIndex: 0,
+  slides: [],
+  countdownTimer: null,
+  refreshTimer: null,
+  secondsLeft: 0,
+  tabPrevia: 'resumen'
+};
+
+const PRESENT_SLIDE_SECONDS = 15;
+const PRESENT_REFRESH_MINUTES = 10;
+
+// Secuencia pensada para una reunión de abastecimiento: primero cómo va el
+// mes, después a quién hay que apurar, y al final territorio y valores.
+const PRESENT_SLIDES = [
+  { tab: 'resumen', selector: '.kpi-hero' },
+  { tab: 'resumen', selector: '#tablaProveedor' },
+  { tab: 'resumen', selector: '#chartFecha' },
+  { tab: 'resumen', selector: '#chartTopProveedores' },
+  { tab: 'resumen', selector: '#chartBrecha' },
+  { tab: 'plan', selector: '#semaforo' },
+  { tab: 'plan', selector: '#tablaPlanAccion' },
+  { tab: 'plan', selector: '#sugerencias' },
+  { tab: 'territorio', selector: '#map' },
+  { tab: 'valores', selector: '#valorKpis' }
+];
+
+function togglePresentation() {
+  if (PRESENT.active) exitPresentation();
+  else startPresentation();
+}
+
+function buildPresentSlides() {
+  return PRESENT_SLIDES
+    .map(s => ({ tab: s.tab, el: document.querySelector(s.selector) }))
+    .filter(s => s.el);
+}
+
+function startPresentation() {
+  if (PRESENT.active) return;
+
+  PRESENT.active = true;
+  PRESENT.paused = false;
+  PRESENT.slideIndex = 0;
+  PRESENT.tabPrevia = ACTIVE_TAB;
+  PRESENT.slides = buildPresentSlides();
+
+  document.body.classList.add('presenting');
+
+  // Pantalla completa cuando el navegador lo permite (en el modal de Sheets
+  // puede fallar, y en ese caso simplemente se sigue sin fullscreen).
+  const root = document.documentElement;
+  if (root.requestFullscreen) root.requestFullscreen().catch(() => {});
+
+  goToSlide(0);
+  PRESENT.secondsLeft = PRESENT_SLIDE_SECONDS;
+  updatePresentInfo();
+
+  clearInterval(PRESENT.countdownTimer);
+  PRESENT.countdownTimer = setInterval(() => {
+    if (!PRESENT.active || PRESENT.paused) { updatePresentInfo(); return; }
+    PRESENT.secondsLeft--;
+    if (PRESENT.secondsLeft <= 0) advanceSlide(1);
+    else updatePresentInfo();
+  }, 1000);
+
+  clearInterval(PRESENT.refreshTimer);
+  PRESENT.refreshTimer = setInterval(refreshLiveData, PRESENT_REFRESH_MINUTES * 60 * 1000);
+
+  setTimeout(() => { if (DATA) renderChartsForActiveTab(); }, 450);
+}
+
+function exitPresentation() {
+  if (!PRESENT.active) return;
+
+  PRESENT.active = false;
+  clearInterval(PRESENT.countdownTimer);
+  clearInterval(PRESENT.refreshTimer);
+
+  document.body.classList.remove('presenting');
+  document.querySelectorAll('.present-current').forEach(el => el.classList.remove('present-current'));
+
+  if (document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
+
+  activateTab(PRESENT.tabPrevia || 'resumen');
+}
+
+function advanceSlide(delta) {
+  if (!PRESENT.slides.length) return;
+
+  PRESENT.slideIndex = (PRESENT.slideIndex + delta + PRESENT.slides.length) % PRESENT.slides.length;
+  goToSlide(PRESENT.slideIndex);
+  PRESENT.secondsLeft = PRESENT_SLIDE_SECONDS;
+  updatePresentInfo();
+}
+
+function goToSlide(index) {
+  document.querySelectorAll('.present-current').forEach(el => el.classList.remove('present-current'));
+
+  const slide = PRESENT.slides[index];
+  if (!slide || !slide.el) return;
+
+  if (ACTIVE_TAB !== slide.tab) activateTab(slide.tab);
+
+  const objetivo = slide.el.closest('.card') || slide.el;
+
+  // El cambio de pestaña acaba de mostrar el panel: se espera un frame para
+  // que el elemento tenga posición antes de desplazarse.
+  requestAnimationFrame(() => {
+    objetivo.classList.add('present-current');
+    objetivo.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+function presentNext() { advanceSlide(1); }
+function presentPrev() { advanceSlide(-1); }
+
+function togglePresentPause() {
+  PRESENT.paused = !PRESENT.paused;
+
+  const btn = document.getElementById('presentPauseBtn');
+  if (btn) btn.textContent = PRESENT.paused ? 'Reanudar' : 'Pausar';
+
+  updatePresentInfo();
+}
+
+function updatePresentInfo() {
+  const el = document.getElementById('presentInfo');
+  if (!el) return;
+
+  const total = PRESENT.slides.length || 1;
+  el.textContent = 'Sección ' + (PRESENT.slideIndex + 1) + ' de ' + total +
+    (PRESENT.paused ? ' · en pausa' : ' · ' + Math.max(0, PRESENT.secondsLeft) + 's');
+}
+
+// Refresco silencioso: actualiza sin ventanas emergentes mientras se presenta.
+function refreshLiveData() {
+  if (!PRESENT.active) return;
+
+  google.script.run
+    .withSuccessHandler(data => {
+      if (!PRESENT.active || !data) return;
+
+      const detalle = DATA ? DATA.detalleIngresos : null;
+      DATA = data;
+      DATA.detalleIngresos = detalle;
+
+      setText('lastUpdateLabel', data.lastUpdate || 'Sin datos');
+
+      renderKPIs();
+      renderTables();
+      renderPlanAccion();
+      renderChartsForActiveTab();
+
+      google.script.run
+        .withSuccessHandler(det => {
+          if (!DATA) return;
+          DATA.detalleIngresos = det || [];
+          renderAllFiltered();
+        })
+        .withFailureHandler(() => {})
+        .getDetalleIngresos(true);
+
+      loadApuntes();
+    })
+    .withFailureHandler(err => console.warn('Refresco en vivo falló', err))
+    .getDashboardData(true);
+}
+
+document.addEventListener('keydown', e => {
+  if (!PRESENT.active) return;
+
+  if (e.key === 'Escape') exitPresentation();
+  else if (e.key === 'ArrowRight') presentNext();
+  else if (e.key === 'ArrowLeft') presentPrev();
+  else if (e.key === ' ') { e.preventDefault(); togglePresentPause(); }
+});
+
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && PRESENT.active) exitPresentation();
+});
+
+/* ══════════════════════ ENVÍO A GOOGLE SLIDES ══════════════════════ */
+
+function enviarGraficoASlides(chartKey, nombreGrafico, urlPresentacion) {
+  Swal.fire({
+    title: 'Enviando gráfico a Slides',
+    text: 'Generando "' + nombreGrafico + '" y actualizando la presentación',
+    allowOutsideClick: false,
+    background: '#FFFFFF',
+    color: '#24352B',
+    didOpen: () => Swal.showLoading()
+  });
+
+  google.script.run
+    .withSuccessHandler(res => {
+      if (res && res.needsConfig) {
+        pedirUrlPresentacion(chartKey, nombreGrafico);
+        return;
+      }
+
+      Swal.fire({
+        icon: 'success',
+        title: res.created ? 'Gráfico agregado a la presentación' : 'Gráfico actualizado',
+        width: 620,
+        html: '<div style="text-align:left; font-size:13.5px; line-height:1.7">' +
+          '<b>' + escapeHtml(nombreGrafico) + '</b> ' +
+          (res.created ? 'se insertó en una diapositiva nueva de ' : 'se actualizó en ') +
+          '<b>' + escapeHtml(res.nombrePresentacion || 'tu presentación') + '</b> (' +
+          escapeHtml(res.actualizadoEn || '') + ').<br><br>' +
+          '<a href="' + escapeHtml(res.url) + '" target="_blank" rel="noopener">' +
+          '<b>Abrir la presentación</b></a><br><br>' +
+          'Puedes mover o redimensionar el gráfico: los próximos envíos lo reemplazan en el ' +
+          'mismo lugar. Para que se refresque solo cada hora, activa MASISA GIS y luego ' +
+          'Auto-actualizar gráficos Slides en la planilla.' +
+          '</div>',
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#2D6A4F'
+      });
+    })
+    .withFailureHandler(err => {
+      const mensaje = (err && err.message) ? err.message : String(err);
+
+      if (/no se encontr|not found|no existe la funci|is not defined/i.test(mensaje)) {
+        Swal.fire({
+          icon: 'info',
+          title: 'Módulo de Slides no instalado',
+          html: 'Para enviar gráficos a Google Slides, agrega el archivo opcional <b>Slides.gs</b> ' +
+            'al proyecto de Apps Script y autoriza el permiso de Presentaciones cuando Google lo pida.' +
+            '<br><br>El dashboard funciona completo sin ese módulo.',
+          confirmButtonText: 'Entendido',
+          confirmButtonColor: '#2D6A4F'
+        });
+        return;
+      }
+
+      Swal.fire('Error', escapeHtml(mensaje), 'error');
+    })
+    .enviarGraficoDirectoASlides(chartKey, urlPresentacion || null);
+}
+
+function pedirUrlPresentacion(chartKey, nombreGrafico) {
+  Swal.fire({
+    title: 'Conecta tu presentación',
+    input: 'url',
+    inputLabel: 'Pega el enlace de tu presentación de Google Slides (solo la primera vez)',
+    inputPlaceholder: 'https://docs.google.com/presentation/d/...',
+    showCancelButton: true,
+    confirmButtonText: 'Conectar y enviar',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#2D6A4F'
+  }).then(result => {
+    if (result.isConfirmed && result.value) {
+      enviarGraficoASlides(chartKey, nombreGrafico, result.value);
+    }
+  });
+}
+</script>

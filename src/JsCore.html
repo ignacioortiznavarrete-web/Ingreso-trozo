@@ -1,0 +1,671 @@
+<script>
+/* ══════════════════════════════════════════════════════
+   NÚCLEO: estado, carga de datos, pestañas, filtros y
+   utilidades de formato compartidas por todos los bloques.
+══════════════════════════════════════════════════════ */
+
+/* ── Red de seguridad: si una librería externa no carga, se avisa
+      en pantalla en vez de dejar una página muerta. ── */
+(function () {
+  let avisado = false;
+
+  window.mostrarErrorFatal = function (mensaje) {
+    if (avisado) return;
+    avisado = true;
+    const div = document.createElement('div');
+    div.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;' +
+      'background:#B3261E;color:#fff;padding:11px 18px;' +
+      'font:600 12.5px Inter,Arial,sans-serif;text-align:center;';
+    div.textContent = 'Error al iniciar el dashboard: ' + mensaje +
+      '. Revisa la conexión a internet o reporta este mensaje.';
+    document.body.appendChild(div);
+  };
+
+  window.addEventListener('error', function (e) {
+    if (e && e.message) window.mostrarErrorFatal(e.message);
+  });
+
+  if (typeof Swal === 'undefined') {
+    window.Swal = {
+      fire: function () { return Promise.resolve({}); },
+      close: function () {},
+      showLoading: function () {}
+    };
+    window.mostrarErrorFatal('no se pudo cargar la librería de avisos');
+  }
+})();
+
+/* ── Estado global ── */
+let DATA = null;
+let APUNTES = { existe: false, items: [], resumen: { porProveedor: {} } };
+let CHART_READY = false;
+let DETALLE_READY = false;
+let LOAD_WATCHDOG = null;
+let ACTIVE_TAB = 'resumen';
+
+const FILTER_IDS = ['fProveedor', 'fPredio', 'fComuna', 'fRol', 'fCalidad', 'fLargo'];
+
+const PLANTA_CABRERO = { lat: -37.034, lng: -72.426, label: 'Ruta 146 N° 2015, Cabrero' };
+
+/* Paleta compartida con Estilos.html. Un solo lugar para el semáforo, para
+   que gráficos, badges y mapas no se desincronicen nunca. */
+const PALETA = {
+  forest: '#1E4D38',
+  forest2: '#2D6A4F',
+  forest3: '#52796F',
+  forest4: '#84A98C',
+  soft: '#E6EFEA',
+  line: '#DCE5DF',
+  text: '#24352B',
+  muted: '#738579',
+  critico: '#B3261E',
+  alerta: '#C28A22',
+  ok: '#2D6A4F'
+};
+
+/* ══════════════════════ CARGA DE DATOS ══════════════════════ */
+
+function loadData(force) {
+  Swal.fire({
+    title: 'Cargando dashboard',
+    text: 'Leyendo plan, ingresos y tendencias',
+    allowOutsideClick: false,
+    background: '#FFFFFF',
+    color: '#24352B',
+    didOpen: () => Swal.showLoading()
+  });
+
+  DETALLE_READY = false;
+  setFiltersLoading(true);
+
+  // Watchdog: si el servidor no responde en 2 minutos, se informa el motivo
+  // más común (permisos nuevos pendientes) en vez de quedar pegado.
+  clearTimeout(LOAD_WATCHDOG);
+  LOAD_WATCHDOG = setTimeout(() => {
+    Swal.fire({
+      icon: 'warning',
+      title: 'La carga está tardando demasiado',
+      width: 620,
+      html: '<div style="text-align:left; font-size:13.5px; line-height:1.7">' +
+        'El servidor no respondió. Lo más común después de actualizar el script es que ' +
+        'falten <b>permisos nuevos por autorizar</b>:<br><br>' +
+        '1. Abre Extensiones y luego Apps Script.<br>' +
+        '2. Selecciona la función <b>onOpen</b> y presiona Ejecutar.<br>' +
+        '3. Acepta los permisos que pida Google.<br>' +
+        '4. Vuelve a abrir el dashboard.' +
+        '</div>',
+      confirmButtonText: 'Entendido',
+      confirmButtonColor: '#2D6A4F'
+    });
+  }, 120000);
+
+  google.script.run
+    .withSuccessHandler(data => {
+      clearTimeout(LOAD_WATCHDOG);
+
+      try {
+        DATA = data;
+        DATA.detalleIngresos = null;
+
+        setText('lastUpdateLabel', data.lastUpdate || 'Sin datos');
+
+        // Cada bloque se renderiza protegido: si uno falla, el resto del
+        // dashboard sigue funcionando y el aviso de carga se cierra igual.
+        safeRender(renderAvisos, 'avisos');
+        safeRender(populateLargoOptions, 'largos');
+        safeRender(poblarListaProveedores, 'lista de proveedores');
+        safeRender(renderKPIs, 'KPIs');
+        safeRender(renderTables, 'tablas');
+        safeRender(renderPlanAccion, 'plan de acción');
+        safeRender(renderChartsForActiveTab, 'gráficos');
+        safeRender(initMap, 'mapa ROL');
+        safeRender(initComunaMap, 'mapa comunas');
+
+        setText('mapStatus', 'KML y KMZ cargando en segundo plano');
+        setText('comunaMapStatus', 'Comunas GIS cargando en segundo plano');
+        setRoleListLoading();
+      } finally {
+        Swal.close();
+      }
+
+      if (window.AUTO_PRESENT && !PRESENT.active) setTimeout(startPresentation, 600);
+
+      // GIS, detalle y apuntes se cargan en paralelo: no bloquean el render.
+      setTimeout(loadRoleMapData, 150);
+      setTimeout(() => loadDetalleIngresos(force), 150);
+      setTimeout(loadApuntes, 200);
+    })
+    .withFailureHandler(err => {
+      clearTimeout(LOAD_WATCHDOG);
+      const mensaje = err && err.message ? err.message : String(err);
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al cargar datos',
+        width: 620,
+        html: '<div style="text-align:left; font-size:13.5px; line-height:1.7">' +
+          '<b>Detalle:</b> ' + escapeHtml(mensaje) + '<br><br>' +
+          'Si el error menciona permisos: abre Extensiones y luego Apps Script, ' +
+          'ejecuta la función <b>onOpen</b> y acepta los permisos nuevos.' +
+          '</div>',
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#2D6A4F'
+      });
+    })
+    .getDashboardData(force);
+}
+
+function loadDetalleIngresos(force) {
+  google.script.run
+    .withSuccessHandler(detalle => {
+      DATA.detalleIngresos = detalle || [];
+      DETALLE_READY = true;
+      setFiltersLoading(false);
+      populateLargoOptions();
+      renderAllFiltered();
+    })
+    .withFailureHandler(err => {
+      setFiltersLoading(false, 'Filtros no disponibles. Reintenta con el botón Actualizar.');
+      console.warn('No se pudo cargar el detalle de ingresos', err);
+    })
+    .getDetalleIngresos(force);
+}
+
+function safeRender(fn, nombre) {
+  try {
+    fn();
+  } catch (err) {
+    console.error('Error de render (' + (nombre || fn.name) + '):', err);
+  }
+}
+
+/* ══════════════════════ PESTAÑAS ══════════════════════ */
+
+function activateTab(nombre) {
+  ACTIVE_TAB = nombre;
+
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.setAttribute('aria-selected', String(btn.dataset.tab === nombre));
+  });
+
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    panel.classList.toggle('is-active', panel.id === 'panel-' + nombre);
+  });
+
+  // Google Charts y Leaflet miden el contenedor al dibujar: en un panel
+  // oculto miden cero. Por eso se redibuja al activar la pestaña.
+  requestAnimationFrame(() => {
+    safeRender(renderChartsForActiveTab, 'gráficos de pestaña');
+
+    if (nombre === 'territorio') {
+      if (typeof MAP !== 'undefined' && MAP) MAP.invalidateSize();
+      if (typeof COMUNA_MAP !== 'undefined' && COMUNA_MAP) COMUNA_MAP.invalidateSize();
+    }
+  });
+}
+
+function isVisible(id) {
+  const el = document.getElementById(id);
+  return Boolean(el && el.offsetParent !== null && el.clientWidth > 0);
+}
+
+/* ══════════════════════ FILTROS ══════════════════════ */
+
+function setFiltersLoading(loading, message) {
+  FILTER_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = loading;
+  });
+
+  const hint = document.getElementById('filtersHint');
+  if (!hint) return;
+
+  if (loading) {
+    hint.textContent = 'Cargando datos para habilitar los filtros';
+  } else if (message) {
+    hint.textContent = message;
+  } else {
+    hint.textContent = 'Los filtros aplican a todas las pestañas.';
+  }
+}
+
+function limpiarFiltros() {
+  FILTER_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  renderAllFiltered();
+}
+
+function populateLargoOptions() {
+  const source = (DATA && (DATA.detalleIngresos || DATA.recepciones)) || [];
+  const valores = [...new Set(source.map(x => String(x.largo || '')))]
+    .filter(v => v && v !== '0')
+    .sort((a, b) => Number(a) - Number(b));
+
+  const select = document.getElementById('fLargo');
+  if (!select) return;
+
+  const actual = select.value;
+  select.innerHTML = '<option value="">Todos los largos</option>' +
+    valores.map(v => '<option value="' + escapeHtml(v) + '">' + fmt(Number(v)) + ' m</option>').join('');
+  select.value = actual;
+}
+
+function renderAllFiltered() {
+  const stats = buildFilteredStats();
+
+  safeRender(() => renderTables(stats), 'tablas');
+  safeRender(() => renderPlanAccion(stats), 'plan de acción');
+  safeRender(() => renderChartsForActiveTab(stats), 'gráficos');
+  safeRender(redrawRoleLayers, 'mapa ROL');
+  safeRender(redrawComunaLayers, 'mapa comunas');
+  safeRender(() => actualizarResumenFiltros(stats), 'resumen de filtros');
+}
+
+function actualizarResumenFiltros(stats) {
+  const el = document.getElementById('filtersSummary');
+  if (!el || !DATA) return;
+
+  if (!hasActiveFilters()) {
+    el.textContent = fmt(DATA.kpis.totalCubicacion) + ' m³ · ' +
+      fmt0(DATA.kpis.totalTrozos) + ' trozos · ' +
+      fmt0(DATA.kpis.proveedoresActivos) + ' proveedores activos';
+    return;
+  }
+
+  const porcentaje = DATA.kpis.totalCubicacion
+    ? stats.totalCubicacion / DATA.kpis.totalCubicacion
+    : 0;
+
+  el.textContent = 'Vista filtrada: ' + fmt(stats.totalCubicacion) + ' m³ (' +
+    fmtPercent(porcentaje) + ' del mes) · ' + fmt0(stats.rows.length) + ' registros';
+}
+
+function debounce(fn, wait) {
+  let timer = null;
+  return function () {
+    const args = arguments;
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(null, args), wait);
+  };
+}
+
+const renderAllFilteredDiferido = debounce(renderAllFiltered, 220);
+
+// Declarada como función para que los atributos oninput del HTML la
+// resuelvan sin depender del ámbito léxico del script.
+function renderAllFilteredDebounced() { renderAllFilteredDiferido(); }
+
+function getFilteredDetailRows() {
+  const source = (DATA && (DATA.detalleIngresos || DATA.recepciones)) || [];
+  const fp = val('fProveedor');
+  const fPredio = val('fPredio');
+  const fc = val('fComuna');
+  const fr = val('fRol');
+  const fCalidad = val('fCalidad');
+  const fLargo = clean(document.getElementById('fLargo').value);
+
+  return source.filter(x => {
+    if (fp && !clean(x.proveedor).includes(fp)) return false;
+    if (fPredio && !clean(x.predio).includes(fPredio)) return false;
+    if (fc && !clean(x.comuna).includes(fc)) return false;
+    if (fr && !clean(x.rol || '').includes(fr)) return false;
+    if (fCalidad && clean(x.calidad) !== fCalidad) return false;
+    if (fLargo && String(x.largo || '') !== fLargo) return false;
+    return true;
+  });
+}
+
+function buildFilteredStats() {
+  const rows = getFilteredDetailRows();
+  const calidades = {};
+  let totalTrozos = 0, totalCubicacion = 0, diametroPonderado = 0;
+
+  rows.forEach(row => {
+    const trozos = Number(row.trozos) || 0;
+    const cub = Number(row.cubicacion) || 0;
+    const diam = Number(row.diametroPromedio) || 0;
+    const calidad = row.calidad || 'SIN CALIDAD';
+
+    totalTrozos += trozos;
+    totalCubicacion += cub;
+    diametroPonderado += diam * trozos;
+
+    if (!calidades[calidad]) calidades[calidad] = { calidad, trozos: 0, cubicacion: 0, diametroPonderado: 0 };
+    calidades[calidad].trozos += trozos;
+    calidades[calidad].cubicacion += cub;
+    calidades[calidad].diametroPonderado += diam * trozos;
+  });
+
+  const calidadRows = Object.values(calidades).map(item => {
+    item.diametroPromedio = item.trozos ? item.diametroPonderado / item.trozos : 0;
+    item.eficiencia = item.trozos ? item.cubicacion / item.trozos : 0;
+    item.participacionTrozos = totalTrozos ? item.trozos / totalTrozos : 0;
+    item.participacionCubicacion = totalCubicacion ? item.cubicacion / totalCubicacion : 0;
+    return item;
+  });
+
+  return {
+    rows,
+    totalTrozos,
+    totalCubicacion,
+    diametroPromedio: totalTrozos ? diametroPonderado / totalTrozos : 0,
+    calidades: calidadRows
+  };
+}
+
+function hasRowLevelFilters() {
+  return Boolean(val('fPredio') || val('fComuna') || val('fRol') || val('fCalidad') ||
+    clean(document.getElementById('fLargo').value));
+}
+
+function hasActiveFilters() {
+  return Boolean(val('fProveedor') || hasRowLevelFilters());
+}
+
+function passesProviderPlanFilter(item) {
+  const fp = val('fProveedor');
+  return !fp || clean(item.proveedor).includes(fp) || clean(item.nombrePlan || '').includes(fp);
+}
+
+/* ══════════════════════ AVISOS ══════════════════════ */
+
+// El dashboard asume que la hoja de datos contiene el mes en curso. Si trae
+// más de un mes, el cumplimiento contra el plan mensual queda inflado: eso
+// hay que decirlo, no corregirlo en silencio.
+function renderAvisos() {
+  const cont = document.getElementById('avisos');
+  if (!cont || !DATA) return;
+
+  const avisos = [];
+  const diag = DATA.diagnostico || {};
+  const meses = diag.mesesEnDatos || [];
+
+  if (meses.length > 1) {
+    avisos.push({
+      tono: 'alerta',
+      html: '<div><b>La hoja de datos tiene ' + meses.length + ' meses cargados</b> (' +
+        meses.map(m => escapeHtml(m.mes)).join(', ') + '). ' +
+        'El cumplimiento se compara contra el plan de <b>' + escapeHtml(DATA.planMonth || 'un solo mes') +
+        '</b>, así que los m³ de los otros meses lo inflan. Deja en la hoja solo el mes en curso.</div>'
+    });
+  }
+
+  if (!diag.planEncontrado) {
+    avisos.push({
+      tono: 'critico',
+      html: '<div><b>No se encontró el plan del mes.</b> Revisa que la Hoja 2 tenga una columna ' +
+        'con el mes de los datos cargados. Sin plan no hay cumplimiento ni plan de acción.</div>'
+    });
+  }
+
+  cont.innerHTML = avisos.map(a =>
+    '<div class="notice notice-' + a.tono + '">' + a.html +
+    '<button class="notice-dismiss" type="button" onclick="this.parentNode.remove()" ' +
+    'aria-label="Cerrar aviso">Cerrar</button></div>'
+  ).join('');
+}
+
+/* ══════════════════════ TABLAS ══════════════════════ */
+
+function makeTable(headers, rows, totalsRow, opciones) {
+  opciones = opciones || {};
+
+  if (!rows.length && !opciones.permitirVacia) {
+    return '<div class="table-empty">' + escapeHtml(opciones.vacio || 'Sin datos para los filtros actuales.') + '</div>';
+  }
+
+  const totalsHtml = totalsRow
+    ? '<tr class="totals-row">' + totalsRow.map((c, i) =>
+        '<td' + (headers[i] && headers[i].num ? ' class="num"' : '') + '>' + c + '</td>').join('') + '</tr>'
+    : '';
+
+  const head = headers.map(h => {
+    const label = typeof h === 'string' ? h : h.label;
+    const clase = (typeof h === 'object' && h.num) ? ' class="num"' : '';
+    return '<th' + clase + '>' + label + '</th>';
+  }).join('');
+
+  const body = rows.map(row =>
+    '<tr>' + row.map((c, i) =>
+      '<td' + (headers[i] && headers[i].num ? ' class="num"' : '') + '>' + c + '</td>').join('') + '</tr>'
+  ).join('');
+
+  return '<div class="table-wrap' + (opciones.clase ? ' ' + opciones.clase : '') + '">' +
+    '<table><thead><tr>' + head + '</tr></thead>' +
+    '<tbody>' + body + totalsHtml + '</tbody></table></div>';
+}
+
+function num(label) { return { label: label, num: true }; }
+
+function badge(texto, clase) {
+  return '<span class="badge badge-' + clase + '">' + texto + '</span>';
+}
+
+/* Un solo criterio de color para el cumplimiento, en toda la aplicación. */
+function nivelPorCumplimiento(valor, plan) {
+  if (!plan) return 'neutro';
+  if (valor >= 1.05) return 'sobre';
+  if (valor >= 0.95) return 'ok';
+  if (valor >= 0.85) return 'seguimiento';
+  if (valor >= 0.60) return 'alerta';
+  return 'critico';
+}
+
+function claseNivel(nivel) {
+  const mapa = {
+    'CRITICO': 'critico',
+    'ALERTA': 'alerta',
+    'SEGUIMIENTO': 'seguimiento',
+    'OK': 'ok',
+    'SOBRE PLAN': 'sobre',
+    'SIN PLAN': 'neutro'
+  };
+  return mapa[nivel] || 'neutro';
+}
+
+function heat(v) {
+  if (v > 0.40) return PALETA.forest;
+  if (v > 0.25) return PALETA.forest2;
+  if (v > 0.10) return PALETA.forest3;
+  return PALETA.forest4;
+}
+
+function qualityColor(value) {
+  const c = clean(value);
+  if (c === 'VERDE') return PALETA.forest2;
+  if (c === 'MANCHADO') return PALETA.alerta;
+  if (c === 'SINIESTRADO') return PALETA.critico;
+  return PALETA.forest3;
+}
+
+function orderQualities(arr) {
+  const orden = { SINIESTRADO: 1, VERDE: 2, MANCHADO: 3 };
+  return [...arr].sort((a, b) => {
+    const ak = orden[clean(a.calidad)] || 99;
+    const bk = orden[clean(b.calidad)] || 99;
+    return ak - bk || String(a.calidad || '').localeCompare(String(b.calidad || ''));
+  });
+}
+
+/* ══════════════════════ TENDENCIA ══════════════════════ */
+
+// Etiqueta de tendencia: la lectura que pide el analista de un vistazo.
+function tendenciaHtml(fila) {
+  const t = String(fila.tendencia || 'SIN DATOS');
+  const variacion = Number(fila.variacion) || 0;
+  const dias = Number(fila.diasSinIngreso) || 0;
+
+  if (t === 'BAJA') {
+    return '<span class="trend trend-baja" title="Últimos días hábiles contra los anteriores">' +
+      '<span class="trend-arrow">&#9660;</span>' + fmtPercent(Math.abs(variacion)) + '</span>';
+  }
+
+  if (t === 'SUBE') {
+    return '<span class="trend trend-sube" title="Últimos días hábiles contra los anteriores">' +
+      '<span class="trend-arrow">&#9650;</span>' + fmtPercent(Math.abs(variacion)) + '</span>';
+  }
+
+  if (t === 'CORTADO') {
+    return '<span class="trend trend-cortado" title="Días hábiles sin despachar">' +
+      '<span class="trend-arrow">&#9632;</span>' + dias + ' días sin despacho</span>';
+  }
+
+  if (t === 'SIN INGRESO') {
+    return '<span class="trend trend-vacio">Sin ingreso</span>';
+  }
+
+  if (t === 'ESTABLE') {
+    return '<span class="trend trend-estable"><span class="trend-arrow">&#9644;</span>estable</span>';
+  }
+
+  return '<span class="trend trend-vacio">Sin datos</span>';
+}
+
+// Sparkline en SVG: sin librerías, y con la meta diaria como referencia.
+function sparkline(serie, meta, tendencia) {
+  const valores = (serie || []).map(v => Number(v) || 0);
+
+  if (valores.length < 2) return '<span class="trend trend-vacio">-</span>';
+
+  const w = 82, h = 22, pad = 2;
+  const max = Math.max(...valores, Number(meta) || 0, 1);
+  const step = (w - pad * 2) / (valores.length - 1);
+
+  const puntos = valores.map((v, i) => {
+    const x = pad + i * step;
+    const y = h - pad - (v / max) * (h - pad * 2);
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  });
+
+  const color = tendencia === 'BAJA' || tendencia === 'CORTADO'
+    ? PALETA.critico
+    : (tendencia === 'SUBE' ? PALETA.forest2 : PALETA.forest3);
+
+  const area = 'M' + pad + ',' + (h - pad) + ' L' + puntos.join(' L') +
+    ' L' + (pad + (valores.length - 1) * step).toFixed(1) + ',' + (h - pad) + ' Z';
+
+  const metaY = meta ? (h - pad - (Number(meta) / max) * (h - pad * 2)) : null;
+  const lineaMeta = metaY !== null && isFinite(metaY)
+    ? '<line x1="' + pad + '" y1="' + metaY.toFixed(1) + '" x2="' + (w - pad) + '" y2="' + metaY.toFixed(1) +
+      '" stroke="' + PALETA.muted + '" stroke-width="1" stroke-dasharray="2 2" opacity=".55"></line>'
+    : '';
+
+  const ultimo = puntos[puntos.length - 1].split(',');
+
+  return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" role="img" ' +
+    'aria-label="Serie diaria de m³">' +
+    '<path d="' + area + '" fill="' + color + '" opacity=".13"></path>' +
+    lineaMeta +
+    '<polyline points="' + puntos.join(' ') + '" fill="none" stroke="' + color +
+    '" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"></polyline>' +
+    '<circle cx="' + ultimo[0] + '" cy="' + ultimo[1] + '" r="2" fill="' + color + '"></circle>' +
+    '</svg>';
+}
+
+/* ══════════════════════ FORMATO ══════════════════════ */
+
+function fmt(v) { return Number(v || 0).toLocaleString('es-CL', { maximumFractionDigits: 2 }); }
+function fmt0(v) { return Number(v || 0).toLocaleString('es-CL', { maximumFractionDigits: 0 }); }
+function fmtCLP(v) { return '$' + Number(v || 0).toLocaleString('es-CL', { maximumFractionDigits: 0 }); }
+function fmtPercent(v) { return (Number(v || 0) * 100).toLocaleString('es-CL', { maximumFractionDigits: 1 }) + '%'; }
+function fmtPercent0(v) { return (Number(v || 0) * 100).toLocaleString('es-CL', { maximumFractionDigits: 0 }) + '%'; }
+
+function fmtSigned(v) {
+  const n = Number(v || 0);
+  const t = Math.abs(n).toLocaleString('es-CL', { maximumFractionDigits: 2 });
+  return (n > 0 ? '+' : n < 0 ? '-' : '') + t;
+}
+
+function fmtSigned0(v) {
+  const n = Number(v || 0);
+  const t = Math.abs(n).toLocaleString('es-CL', { maximumFractionDigits: 0 });
+  return (n > 0 ? '+' : n < 0 ? '-' : '') + t;
+}
+
+function safe(v) { return Number(v || 0) || 1; }
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+
+  const text = String(value);
+  if (el.textContent === text) return;
+
+  el.textContent = text;
+  el.classList.remove('value-pulse');
+  void el.offsetWidth;
+  el.classList.add('value-pulse');
+}
+
+// Para los pies de tarjeta, que llevan negritas. Todo lo que entra aquí lo
+// construye el propio dashboard, nunca texto crudo de la planilla.
+function setHtml(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
+function setTone(id, tono) {
+  const el = document.getElementById(id);
+  if (el) el.dataset.tone = tono || '';
+}
+
+function val(id) {
+  const el = document.getElementById(id);
+  return el ? clean(el.value) : '';
+}
+
+function clean(v) {
+  return String(v || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function escapeHtml(str) {
+  return String(str == null ? '' : str).replace(/[&<>"']/g, m =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m]));
+}
+
+function cssEscape(value) {
+  if (window.CSS && CSS.escape) return CSS.escape(value);
+  return String(value || '').replace(/["\\]/g, '\\$&');
+}
+
+/* Mismo criterio que faenaKey_ del servidor. */
+function faenaKeyClient(value) {
+  return clean(value).replace(/^MASISA\s+/, '').replace(/\s+/g, ' ').trim();
+}
+
+/* ══════════════════════ EXPORTAR ══════════════════════ */
+
+function exportCSV() {
+  if (!DATA) return;
+
+  const rows = [
+    ['Diametro', 'Largo', 'Trozos', 'Cubicacion', 'Eficiencia'],
+    ...DATA.matriz.map(x => [x.diametro, x.largo, x.trozos, x.cubicacion, x.eficiencia])
+  ];
+
+  const csv = rows.map(r => r.join(';')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+
+  a.href = url;
+  a.download = 'matriz_eficiencia.csv';
+  a.click();
+
+  URL.revokeObjectURL(url);
+
+  Swal.fire({
+    icon: 'success',
+    title: 'Matriz exportada',
+    timer: 1200,
+    showConfirmButton: false
+  });
+}
+
+window.addEventListener('resize', debounce(() => {
+  if (DATA) renderChartsForActiveTab();
+  if (typeof MAP !== 'undefined' && MAP) MAP.invalidateSize();
+  if (typeof COMUNA_MAP !== 'undefined' && COMUNA_MAP) COMUNA_MAP.invalidateSize();
+}, 260));
+</script>

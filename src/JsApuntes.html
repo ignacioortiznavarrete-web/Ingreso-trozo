@@ -1,0 +1,389 @@
+<script>
+/* ══════════════════════════════════════════════════════
+   APUNTES
+   Bitácora del analista: la pregunta, la respuesta, el
+   compromiso y su fecha. Vive en la hoja "Apuntes" de la
+   misma planilla y se lee siempre en vivo.
+══════════════════════════════════════════════════════ */
+
+let APUNTES_FILTRO = '';
+let APUNTES_GUARDANDO = false;
+
+function loadApuntes() {
+  google.script.run
+    .withSuccessHandler(res => {
+      APUNTES = res || { existe: false, items: [], resumen: { porProveedor: {} } };
+      renderApuntes();
+      // La tabla de cumplimiento y el plan muestran el contador de apuntes,
+      // así que se refrescan cuando llegan.
+      safeRender(renderComplianceTable, 'cumplimiento');
+      safeRender(renderPlanAccion, 'plan de acción');
+    })
+    .withFailureHandler(err => {
+      const mensaje = (err && err.message) ? err.message : String(err);
+      const hint = document.getElementById('apuntesHojaHint');
+
+      if (/is not defined|no se encontr|not found|no existe la funci/i.test(mensaje)) {
+        if (hint) hint.textContent = 'Falta el archivo Apuntes.gs en el proyecto de Apps Script.';
+      } else if (hint) {
+        hint.textContent = 'No se pudieron cargar los apuntes: ' + mensaje;
+      }
+
+      console.warn('No se pudieron cargar los apuntes', err);
+    })
+    .getApuntes();
+}
+
+function renderApuntes() {
+  const resumen = APUNTES.resumen || {};
+
+  setText('kApuntesAbiertos', fmt0(resumen.abiertos || 0));
+  setText('kApuntesAbiertosLabel',
+    fmt0(resumen.enCurso || 0) + ' en curso · ' + fmt0(resumen.cerrados || 0) + ' cerrados');
+  setText('kApuntesVencidos', fmt0(resumen.vencidos || 0));
+  setTone('kApuntesVencidos', (resumen.vencidos || 0) > 0 ? 'critico' : 'ok');
+  setText('kApuntesM3', fmt0(resumen.m3Comprometidos || 0) + ' m³');
+  setText('kApuntesProveedores', fmt0(Object.keys(resumen.porProveedor || {}).length));
+
+  const hint = document.getElementById('apuntesHojaHint');
+  if (hint) {
+    hint.textContent = APUNTES.existe
+      ? 'Hoja "' + (APUNTES.hoja || 'Apuntes') + '" · ' + fmt0(resumen.total || 0) + ' registros'
+      : 'La hoja de apuntes se crea sola al guardar el primer registro.';
+  }
+
+  renderListaApuntes();
+  actualizarContadoresPestanas();
+}
+
+function renderListaApuntes() {
+  const cont = document.getElementById('listaApuntes');
+  if (!cont) return;
+
+  const items = (APUNTES.items || [])
+    .filter(x => !APUNTES_FILTRO || x.estado === APUNTES_FILTRO);
+
+  if (!items.length) {
+    cont.innerHTML = '<div class="empty-state">' +
+      '<b>' + (APUNTES_FILTRO ? 'Sin apuntes en este estado' : 'Todavía no hay apuntes') + '</b>' +
+      (APUNTES_FILTRO
+        ? 'Prueba con otro filtro.'
+        : 'Registra la primera pregunta desde el formulario, o usa las preguntas ' +
+          'ya redactadas en la pestaña Plan de acción.') +
+      '</div>';
+    return;
+  }
+
+  cont.innerHTML = items.map(item => {
+    const prioridadClase = item.prioridad === 'Alta' ? 'critico'
+      : (item.prioridad === 'Media' ? 'alerta' : 'neutro');
+
+    const compromiso = item.fechaCompromiso
+      ? '<span>Compromiso: <b' + (item.vencido ? ' style="color:var(--st-critico)"' : '') + '>' +
+        escapeHtml(item.fechaCompromiso) + (item.vencido ? ' (vencido)' : '') + '</b></span>'
+      : '';
+
+    return '<article class="apunte-item" data-estado="' + escapeHtml(item.estado) + '">' +
+      '<div class="apunte-top">' +
+        '<span class="apunte-prov">' + escapeHtml(item.proveedor || 'General') + '</span>' +
+        badge(item.estado, item.estado === 'Cerrado' ? 'ok' : (item.estado === 'En curso' ? 'alerta' : 'critico')) +
+        badge(item.tipo, 'neutro') +
+        badge(item.prioridad, prioridadClase) +
+        '<span class="apunte-fecha">' + escapeHtml(item.fechaTexto || '') + '</span>' +
+      '</div>' +
+
+      '<div class="apunte-texto">' + escapeHtml(item.pregunta) + '</div>' +
+
+      (item.respuesta ? '<div class="apunte-respuesta">' + escapeHtml(item.respuesta) + '</div>' : '') +
+
+      '<div class="apunte-meta">' +
+        (item.faena ? '<span>Predio: <b>' + escapeHtml(item.faena) + '</b></span>' : '') +
+        (item.responsable ? '<span>Responsable: <b>' + escapeHtml(item.responsable) + '</b></span>' : '') +
+        compromiso +
+        (item.m3 ? '<span>Compromete <b>' + fmt0(item.m3) + ' m³</b></span>' : '') +
+        (item.tendenciaSnapshot
+          ? '<span>Al registrar: ' + escapeHtml(item.tendenciaSnapshot) +
+            (item.cumplimientoSnapshot ? ' · ' + fmtPercent0(item.cumplimientoSnapshot) : '') + '</span>'
+          : '') +
+      '</div>' +
+
+      '<div class="apunte-acciones">' +
+        '<button class="btn-secondary btn-sm" type="button" onclick="editarApunte(' +
+          JSON.stringify(item.id).replace(/"/g, '&quot;') + ')">Editar</button>' +
+        (item.estado !== 'En curso'
+          ? '<button class="btn-secondary btn-sm" type="button" onclick="cambiarEstado(' +
+            JSON.stringify(item.id).replace(/"/g, '&quot;') + ', \'En curso\')">Marcar en curso</button>'
+          : '') +
+        (item.estado !== 'Cerrado'
+          ? '<button class="btn-secondary btn-sm" type="button" onclick="cerrarApunte(' +
+            JSON.stringify(item.id).replace(/"/g, '&quot;') + ')">Cerrar</button>'
+          : '<button class="btn-secondary btn-sm" type="button" onclick="cambiarEstado(' +
+            JSON.stringify(item.id).replace(/"/g, '&quot;') + ', \'Abierto\')">Reabrir</button>') +
+        '<button class="btn-secondary btn-sm" type="button" onclick="borrarApunte(' +
+          JSON.stringify(item.id).replace(/"/g, '&quot;') + ')">Eliminar</button>' +
+      '</div>' +
+      '</article>';
+  }).join('');
+}
+
+function filtrarApuntes(estado) {
+  APUNTES_FILTRO = estado || '';
+
+  const grupo = document.querySelector('#panel-apuntes .segmented');
+  if (grupo) {
+    const etiquetas = ['', 'Abierto', 'En curso', 'Cerrado'];
+    grupo.querySelectorAll('button').forEach((btn, i) => {
+      btn.setAttribute('aria-pressed', String(etiquetas[i] === APUNTES_FILTRO));
+    });
+  }
+
+  renderListaApuntes();
+}
+
+/* ══════════════════════ FORMULARIO ══════════════════════ */
+
+function poblarListaProveedores() {
+  const lista = document.getElementById('listaProveedores');
+  if (!lista || !DATA) return;
+
+  const nombres = [...new Set([
+    ...(DATA.proveedores || []).map(x => x.proveedor),
+    ...(DATA.cumplimientoProveedores || []).map(x => x.proveedor)
+  ])].filter(Boolean).sort();
+
+  lista.innerHTML = nombres.map(n => '<option value="' + escapeHtml(n) + '"></option>').join('');
+}
+
+function guardarApunteDesdeForm(evento) {
+  evento.preventDefault();
+
+  if (APUNTES_GUARDANDO) return false;
+
+  const pregunta = document.getElementById('apuntePregunta').value.trim();
+
+  if (!pregunta) {
+    Swal.fire({
+      icon: 'info',
+      title: 'Falta la pregunta',
+      text: 'Escribe la pregunta u observación antes de guardar.',
+      confirmButtonColor: '#2D6A4F'
+    });
+    document.getElementById('apuntePregunta').focus();
+    return false;
+  }
+
+  const proveedor = document.getElementById('apunteProveedor').value.trim();
+  const contexto = contextoProveedor(proveedor);
+
+  enviarApunte({
+    id: document.getElementById('apunteId').value,
+    proveedor: proveedor,
+    faena: document.getElementById('apunteFaena').value,
+    tipo: document.getElementById('apunteTipo').value,
+    prioridad: document.getElementById('apuntePrioridad').value,
+    pregunta: pregunta,
+    respuesta: document.getElementById('apunteRespuesta').value,
+    responsable: document.getElementById('apunteResponsable').value,
+    fechaCompromiso: document.getElementById('apunteFechaCompromiso').value,
+    m3: document.getElementById('apunteM3').value,
+    estado: document.getElementById('apunteEstado').value,
+    mes: (DATA && DATA.planMonth) || '',
+    cumplimiento: contexto.cumplimiento,
+    tendencia: contexto.tendencia,
+    origen: 'Dashboard'
+  });
+
+  return false;
+}
+
+// Contexto del momento: deja registrado en qué escenario se hizo la pregunta.
+function contextoProveedor(proveedor) {
+  if (!proveedor || !DATA) return { cumplimiento: 0, tendencia: '' };
+
+  const fila = (DATA.cumplimientoProveedores || [])
+    .find(x => clean(x.proveedor) === clean(proveedor));
+
+  if (!fila) return { cumplimiento: 0, tendencia: '' };
+
+  return {
+    cumplimiento: Number(fila.cumplimiento) || 0,
+    tendencia: fila.tendencia || ''
+  };
+}
+
+function enviarApunte(payload) {
+  APUNTES_GUARDANDO = true;
+
+  const btn = document.getElementById('btnGuardarApunte');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando'; }
+
+  google.script.run
+    .withSuccessHandler(res => {
+      APUNTES_GUARDANDO = false;
+      if (btn) { btn.disabled = false; btn.textContent = 'Guardar apunte'; }
+
+      APUNTES = res || APUNTES;
+      resetFormApunte();
+      renderApuntes();
+      safeRender(renderComplianceTable, 'cumplimiento');
+      safeRender(renderPlanAccion, 'plan de acción');
+
+      Swal.fire({
+        icon: 'success',
+        title: 'Apunte guardado',
+        text: 'Quedó registrado en la hoja Apuntes.',
+        timer: 1400,
+        showConfirmButton: false
+      });
+    })
+    .withFailureHandler(err => {
+      APUNTES_GUARDANDO = false;
+      if (btn) { btn.disabled = false; btn.textContent = 'Guardar apunte'; }
+
+      const mensaje = (err && err.message) ? err.message : String(err);
+
+      Swal.fire({
+        icon: /is not defined|no existe la funci/i.test(mensaje) ? 'info' : 'error',
+        title: /is not defined|no existe la funci/i.test(mensaje)
+          ? 'Falta el módulo de apuntes'
+          : 'No se pudo guardar',
+        html: /is not defined|no existe la funci/i.test(mensaje)
+          ? 'Agrega el archivo <b>Apuntes.gs</b> al proyecto de Apps Script y vuelve a intentarlo.'
+          : escapeHtml(mensaje),
+        confirmButtonColor: '#2D6A4F'
+      });
+    })
+    .guardarApunte(payload);
+}
+
+function resetFormApunte() {
+  document.getElementById('apunteId').value = '';
+  document.getElementById('apunteProveedor').value = '';
+  document.getElementById('apunteFaena').value = '';
+  document.getElementById('apunteTipo').value = 'Pregunta';
+  document.getElementById('apuntePregunta').value = '';
+  document.getElementById('apunteRespuesta').value = '';
+  document.getElementById('apunteResponsable').value = '';
+  document.getElementById('apunteFechaCompromiso').value = '';
+  document.getElementById('apunteM3').value = '';
+  document.getElementById('apuntePrioridad').value = 'Media';
+  document.getElementById('apunteEstado').value = 'Abierto';
+
+  setText('formApunteTitulo', 'Nuevo apunte');
+}
+
+// Puente desde las tablas: abre la pestaña de apuntes con la pregunta ya
+// redactada para ese proveedor, lista para revisar y guardar.
+function abrirApunteDesdeTabla(proveedor, pregunta) {
+  activateTab('apuntes');
+  resetFormApunte();
+
+  document.getElementById('apunteProveedor').value = proveedor || '';
+  document.getElementById('apuntePregunta').value = pregunta || '';
+  setText('formApunteTitulo', proveedor ? 'Apunte para ' + proveedor : 'Nuevo apunte');
+
+  setTimeout(() => {
+    const card = document.getElementById('formApunteCard');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.getElementById('apuntePregunta').focus();
+  }, 120);
+}
+
+function guardarSugerencia(proveedor, pregunta, cumplimiento, tendencia, nivel) {
+  enviarApunte({
+    proveedor: proveedor,
+    pregunta: pregunta,
+    tipo: 'Pregunta',
+    prioridad: nivel === 'CRITICO' ? 'Alta' : (nivel === 'ALERTA' ? 'Media' : 'Baja'),
+    estado: 'Abierto',
+    mes: (DATA && DATA.planMonth) || '',
+    cumplimiento: cumplimiento,
+    tendencia: tendencia,
+    origen: 'Sugerencia automática'
+  });
+}
+
+function editarApunte(id) {
+  const item = (APUNTES.items || []).find(x => x.id === id);
+  if (!item) return;
+
+  activateTab('apuntes');
+
+  document.getElementById('apunteId').value = item.id;
+  document.getElementById('apunteProveedor').value = item.proveedor || '';
+  document.getElementById('apunteFaena').value = item.faena || '';
+  document.getElementById('apunteTipo').value = item.tipo || 'Pregunta';
+  document.getElementById('apuntePregunta').value = item.pregunta || '';
+  document.getElementById('apunteRespuesta').value = item.respuesta || '';
+  document.getElementById('apunteResponsable').value = item.responsable || '';
+  document.getElementById('apunteM3').value = item.m3 || '';
+  document.getElementById('apuntePrioridad').value = item.prioridad || 'Media';
+  document.getElementById('apunteEstado').value = item.estado || 'Abierto';
+
+  const iso = String(item.fechaCompromisoISO || '').slice(0, 10);
+  document.getElementById('apunteFechaCompromiso').value = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : '';
+
+  setText('formApunteTitulo', 'Editando ' + item.id);
+
+  const card = document.getElementById('formApunteCard');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function cambiarEstado(id, estado, respuesta) {
+  google.script.run
+    .withSuccessHandler(res => {
+      APUNTES = res || APUNTES;
+      renderApuntes();
+      safeRender(renderComplianceTable, 'cumplimiento');
+      safeRender(renderPlanAccion, 'plan de acción');
+    })
+    .withFailureHandler(err => {
+      Swal.fire('No se pudo actualizar', (err && err.message) || String(err), 'error');
+    })
+    .cambiarEstadoApunte(id, estado, respuesta || '');
+}
+
+function cerrarApunte(id) {
+  const item = (APUNTES.items || []).find(x => x.id === id);
+
+  Swal.fire({
+    title: 'Cerrar apunte',
+    input: 'textarea',
+    inputLabel: 'Respuesta o acuerdo final (opcional)',
+    inputValue: (item && item.respuesta) || '',
+    inputPlaceholder: 'Qué respondió el proveedor y qué se acordó',
+    showCancelButton: true,
+    confirmButtonText: 'Cerrar apunte',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#2D6A4F'
+  }).then(res => {
+    if (res.isConfirmed) cambiarEstado(id, 'Cerrado', res.value || '');
+  });
+}
+
+function borrarApunte(id) {
+  Swal.fire({
+    icon: 'warning',
+    title: 'Eliminar el apunte',
+    text: 'Se borra la fila de la hoja Apuntes y no se puede deshacer.',
+    showCancelButton: true,
+    confirmButtonText: 'Eliminar',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#B3261E'
+  }).then(res => {
+    if (!res.isConfirmed) return;
+
+    google.script.run
+      .withSuccessHandler(out => {
+        APUNTES = out || APUNTES;
+        renderApuntes();
+        safeRender(renderComplianceTable, 'cumplimiento');
+        safeRender(renderPlanAccion, 'plan de acción');
+      })
+      .withFailureHandler(err => {
+        Swal.fire('No se pudo eliminar', (err && err.message) || String(err), 'error');
+      })
+      .eliminarApunte(id);
+  });
+}
+</script>

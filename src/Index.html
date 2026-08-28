@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MASISA · Ingreso de trozo</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://www.gstatic.com/charts/loader.js"></script>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <?!= include('Estilos'); ?>
+</head>
+
+<body>
+
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">M</div>
+      <div>
+        <div class="brand-title">Ingreso de trozo</div>
+        <div class="brand-subtitle">Control de abastecimiento y cumplimiento de plan</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <div class="brand-update" title="Fecha del último ingreso cargado en la planilla">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <span>Datos al</span>
+        <span id="lastUpdateLabel" class="update-date">cargando</span>
+      </div>
+      <button class="btn-ghost-light btn-hide-present" type="button" onclick="loadData(true)">Actualizar</button>
+      <button class="btn-ghost-light btn-hide-present" type="button" onclick="exportCSV()">Exportar</button>
+      <button class="btn-ghost-light" type="button" onclick="togglePresentation()">Presentar</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Secciones del dashboard">
+    <button class="tab" role="tab" id="tab-btn-resumen" data-tab="resumen" aria-selected="true"
+            onclick="activateTab('resumen')">Resumen</button>
+    <button class="tab" role="tab" id="tab-btn-plan" data-tab="plan" aria-selected="false"
+            onclick="activateTab('plan')">
+      Plan de acción
+      <span id="tabCountPlan" class="tab-count">0</span>
+    </button>
+    <button class="tab" role="tab" id="tab-btn-territorio" data-tab="territorio" aria-selected="false"
+            onclick="activateTab('territorio')">Territorio</button>
+    <button class="tab" role="tab" id="tab-btn-detalle" data-tab="detalle" aria-selected="false"
+            onclick="activateTab('detalle')">Detalle</button>
+    <button class="tab" role="tab" id="tab-btn-valores" data-tab="valores" aria-selected="false"
+            onclick="activateTab('valores')">Valores</button>
+    <button class="tab" role="tab" id="tab-btn-apuntes" data-tab="apuntes" aria-selected="false"
+            onclick="activateTab('apuntes')">
+      Apuntes
+      <span id="tabCountApuntes" class="tab-count">0</span>
+    </button>
+  </nav>
+
+  <div class="wrap">
+
+    <!-- ═══════════ FILTROS COMPARTIDOS POR TODAS LAS PESTAÑAS ═══════════ -->
+    <div class="filters-bar" id="filtersBar">
+      <div class="filters">
+        <input id="fProveedor" placeholder="Proveedor" aria-label="Filtrar por proveedor" oninput="renderAllFilteredDebounced()" disabled>
+        <input id="fPredio" placeholder="Predio o faena" aria-label="Filtrar por predio o faena" oninput="renderAllFilteredDebounced()" disabled>
+        <input id="fComuna" placeholder="Comuna" aria-label="Filtrar por comuna" oninput="renderAllFilteredDebounced()" disabled>
+        <input id="fRol" placeholder="ROL" aria-label="Filtrar por ROL" oninput="renderAllFilteredDebounced()" disabled>
+        <select id="fCalidad" aria-label="Filtrar por calidad" onchange="renderAllFiltered()" disabled>
+          <option value="">Todas las calidades</option>
+          <option value="SINIESTRADO">Siniestrado</option>
+          <option value="VERDE">Verde</option>
+          <option value="MANCHADO">Manchado</option>
+        </select>
+        <select id="fLargo" aria-label="Filtrar por largo" onchange="renderAllFiltered()" disabled>
+          <option value="">Todos los largos</option>
+        </select>
+        <button class="btn-secondary" type="button" onclick="limpiarFiltros()">Limpiar</button>
+      </div>
+      <div class="filters-meta">
+        <span id="filtersHint">Cargando datos para habilitar los filtros</span>
+        <span id="filtersSummary"></span>
+      </div>
+    </div>
+
+    <div id="avisos"></div>
+
+    <!-- ═══════════════════════ RESUMEN ═══════════════════════ -->
+    <section class="tab-panel is-active" id="panel-resumen" role="tabpanel" aria-labelledby="tab-btn-resumen">
+
+      <!-- Fila de decisión: con estas tres cifras se decide el día -->
+      <div class="kpi-hero">
+        <div class="card" id="cardCumplimiento">
+          <div class="k-label">Cumplimiento a fecha</div>
+          <div id="kCumplimientoPlan" class="k-value">-</div>
+          <div id="kCumplimientoPlanLabel" class="k-sub">real sobre plan a fecha</div>
+          <div class="k-foot">
+            <div class="progress" title="Avance del mes contra el plan">
+              <div class="progress-fill" id="progressReal" style="width:0%"></div>
+              <div class="progress-marker" id="progressMeta" style="left:0%"></div>
+            </div>
+            <div class="progress-legend">
+              <span id="progressLegendReal">0 m³</span>
+              <span id="progressLegendPlan">plan mes 0 m³</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="cardBrecha">
+          <div class="k-label">Brecha vs plan a fecha</div>
+          <div id="kDiferenciaPlan" class="k-value">-</div>
+          <div id="kDiferenciaPlanLabel" class="k-sub">m³ sobre o bajo el plan a la fecha</div>
+          <div class="k-foot" id="kDiferenciaPlanFoot"></div>
+        </div>
+
+        <div class="card" id="cardRitmo">
+          <div class="k-label">Ritmo requerido para cerrar</div>
+          <div id="kRitmoRequerido" class="k-value">-</div>
+          <div id="kRitmoRequeridoLabel" class="k-sub">m³ por día hábil restante</div>
+          <div class="k-foot" id="kRitmoRequeridoFoot"></div>
+        </div>
+      </div>
+
+      <div class="kpis" style="margin-bottom:14px">
+        <div class="card">
+          <div class="k-label">Cubicación ingresada</div>
+          <div id="kCub" class="k-value">-</div>
+          <div id="kCubPlanDetalle" class="k-sub">m³ del mes</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Plan del mes</div>
+          <div id="kPlanMes" class="k-value">-</div>
+          <div id="kPlanMesLabel" class="k-sub">m³ comprometidos</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Proyección de cierre</div>
+          <div id="kProyeccionCierre" class="k-value">-</div>
+          <div id="kProyeccionCierreLabel" class="k-sub">según el ritmo actual</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Proveedores en riesgo</div>
+          <div id="kProveedoresRiesgo" class="k-value">-</div>
+          <div id="kProveedoresRiesgoLabel" class="k-sub">críticos y en alerta</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Diámetro promedio</div>
+          <div id="kDiam" class="k-value">-</div>
+          <div class="k-sub">ponderado por trozos</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Concentración top 3</div>
+          <div id="kConcentracion" class="k-value">-</div>
+          <div id="kConcentracionLabel" class="k-sub">participación de los 3 mayores</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Proveedor líder</div>
+          <div id="kProveedorLider" class="k-value">-</div>
+          <div id="kProveedorLiderLabel" class="k-sub">mayor cubicación del mes</div>
+        </div>
+      </div>
+
+      <!-- ═══ LA TABLA CENTRAL DEL DASHBOARD ═══ -->
+      <div class="card flush" style="margin-bottom:14px">
+        <div class="card-head flush">
+          <div>
+            <h2 class="section-title">Cumplimiento plan proveedores</h2>
+            <p class="card-hint">
+              Tendencia calculada sobre los últimos días hábiles contra los anteriores.
+              La columna de apuntes abre la pregunta ya redactada para ese proveedor.
+            </p>
+          </div>
+          <div class="pill-row">
+            <span id="cumplimientoStatus" class="pill">Cargando</span>
+            <button class="btn-secondary btn-sm" type="button" onclick="toggleSoloRiesgo()" id="btnSoloRiesgo"
+                    aria-pressed="false">Solo bajo plan</button>
+          </div>
+        </div>
+        <div id="tablaProveedor"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-head">
+          <div>
+            <h3>Entrega diaria: m³ real contra meta diaria hábil</h3>
+            <p class="card-hint">La barra clara es la proyección de camiones; la línea roja es la meta diaria del plan.</p>
+          </div>
+          <button class="chart-send" type="button"
+                  onclick="enviarGraficoASlides('entregaDiaria', 'Entrega diaria: m³ real vs meta diaria hábil')">Enviar a Slides</button>
+        </div>
+        <div id="chartFecha" class="chart tall"></div>
+      </div>
+
+      <div class="grid-main" style="margin-bottom:14px">
+        <div class="card">
+          <div class="card-head">
+            <h3>Top proveedores por cubicación</h3>
+            <button class="chart-send" type="button"
+                    onclick="enviarGraficoASlides('topProveedores', 'Top proveedores por cubicación')">Enviar a Slides</button>
+          </div>
+          <div id="chartTopProveedores" class="chart"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Brecha vs plan a fecha</h3></div>
+          <div id="chartBrecha" class="chart"></div>
+          <p class="card-hint">Los 10 proveedores más desviados del plan a la fecha, en m³.</p>
+        </div>
+      </div>
+
+      <div class="quality-kpis" style="margin-bottom:14px">
+        <div class="card quality-kpi siniestrado">
+          <div class="k-label">Diámetro promedio · Siniestrado</div>
+          <div id="kDiamSiniestrado" class="k-value">-</div>
+          <div id="kVolSiniestrado" class="k-sub">m³: -</div>
+        </div>
+        <div class="card quality-kpi">
+          <div class="k-label">Diámetro promedio · Verde</div>
+          <div id="kDiamVerde" class="k-value">-</div>
+          <div id="kVolVerde" class="k-sub">m³: -</div>
+        </div>
+        <div class="card quality-kpi manchado">
+          <div class="k-label">Diámetro promedio · Manchado</div>
+          <div id="kDiamManchado" class="k-value">-</div>
+          <div id="kVolManchado" class="k-sub">m³: -</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head">
+            <h3>Trozos por calidad</h3>
+            <button class="chart-send" type="button"
+                    onclick="enviarGraficoASlides('calidadTrozos', 'Trozos por calidad')">Enviar a Slides</button>
+          </div>
+          <div id="chartCalidadTrozos" class="chart"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3>Cubicación por calidad</h3>
+            <button class="chart-send" type="button"
+                    onclick="enviarGraficoASlides('calidadCubicacion', 'Cubicación por calidad')">Enviar a Slides</button>
+          </div>
+          <div id="chartCalidadCubicacion" class="chart"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ PLAN DE ACCIÓN ═══════════════════════ -->
+    <section class="tab-panel" id="panel-plan" role="tabpanel" aria-labelledby="tab-btn-plan">
+
+      <div class="semaforo" id="semaforo"></div>
+
+      <div class="card flush" style="margin-bottom:14px">
+        <div class="card-head flush">
+          <div>
+            <h2 class="section-title">A quién llamar primero</h2>
+            <p class="card-hint">
+              Ordenado por riesgo: pondera cuánto falta, hacia dónde va la tendencia,
+              hace cuántos días hábiles que no despacha y cuánto pesa dentro del plan del mes.
+            </p>
+          </div>
+          <div class="plan-toolbar" style="margin:0">
+            <div class="segmented" role="group" aria-label="Filtrar por nivel">
+              <button type="button" data-nivel="" aria-pressed="true" onclick="filtrarPlan('')">Todos</button>
+              <button type="button" data-nivel="CRITICO" aria-pressed="false" onclick="filtrarPlan('CRITICO')">Críticos</button>
+              <button type="button" data-nivel="ALERTA" aria-pressed="false" onclick="filtrarPlan('ALERTA')">Alerta</button>
+              <button type="button" data-nivel="BAJA" aria-pressed="false" onclick="filtrarPlan('BAJA')">A la baja</button>
+            </div>
+          </div>
+        </div>
+        <div id="tablaPlanAccion"></div>
+      </div>
+
+      <div class="grid-main">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>Preguntas del mes</h3>
+              <p class="card-hint">Redactadas desde la tendencia de cada proveedor. Guardar la lleva a la hoja Apuntes.</p>
+            </div>
+          </div>
+          <div id="sugerencias" class="stack-sm"></div>
+        </div>
+
+        <div class="card flush">
+          <div class="card-head flush">
+            <div>
+              <h3>Quién puede cubrir el déficit</h3>
+              <p class="card-hint">Proveedores sobre plan que no vienen a la baja.</p>
+            </div>
+          </div>
+          <div id="tablaCoberturas"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ TERRITORIO ═══════════════════════ -->
+    <section class="tab-panel" id="panel-territorio" role="tabpanel" aria-labelledby="tab-btn-territorio">
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-head">
+          <div>
+            <h2 class="section-title">Mapa por ROL</h2>
+            <p class="card-hint">Predios con archivo KML o KMZ en la carpeta de Drive, coloreados por la métrica elegida.</p>
+          </div>
+          <div class="pill-row">
+            <span id="mapStatus" class="pill">Cargando</span>
+            <select id="metricMap" style="width:auto" onchange="redrawRoleLayers()" aria-label="Métrica del mapa">
+              <option value="cubicacion">Color por cubicación</option>
+              <option value="trozos">Color por trozos</option>
+              <option value="eficiencia">Color por eficiencia</option>
+            </select>
+          </div>
+        </div>
+        <div class="map-layout">
+          <div id="map"></div>
+          <aside class="role-list">
+            <div id="roleListHead" class="role-list-head">Cargando predios</div>
+            <div id="roleList"><div class="role-empty">Cargando predios KML y KMZ desde Drive.</div></div>
+          </aside>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-head">
+          <div>
+            <h3>Mapa analítico por comuna</h3>
+            <p class="card-hint">Agrupa los predios GIS visibles por comuna.</p>
+          </div>
+          <div class="pill-row">
+            <span id="comunaMapStatus" class="pill">Cargando</span>
+            <select id="metricComunaMap" style="width:auto" onchange="redrawComunaLayers()" aria-label="Métrica del mapa por comuna">
+              <option value="cubicacion">Tamaño por cubicación</option>
+              <option value="trozos">Tamaño por trozos</option>
+              <option value="predios">Tamaño por predios</option>
+            </select>
+          </div>
+        </div>
+        <div id="comunaMap"></div>
+      </div>
+
+      <div class="card flush">
+        <div class="card-head flush"><h3>Resumen por región</h3></div>
+        <div id="tablaRegion"></div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ DETALLE ═══════════════════════ -->
+    <section class="tab-panel" id="panel-detalle" role="tabpanel" aria-labelledby="tab-btn-detalle">
+
+      <div class="card flush" style="margin-bottom:14px">
+        <div class="card-head flush"><h3>Resumen analítico por calidad</h3></div>
+        <div id="tablaCalidad"></div>
+      </div>
+
+      <div class="card flush" style="margin-bottom:14px">
+        <div class="card-head flush">
+          <div>
+            <h3>Tabla general de recepciones</h3>
+            <p class="card-hint">Agrupada por proveedor, predio, comuna, calidad y largo. Muestra las 250 combinaciones de mayor volumen.</p>
+          </div>
+        </div>
+        <div id="tablaGeneral"></div>
+      </div>
+
+      <div class="card flush">
+        <div class="card-head flush">
+          <div>
+            <h3>Matriz diámetro por largo</h3>
+            <p class="card-hint">Base del cálculo de eficiencia (m³ por trozo). El botón Exportar del encabezado la descarga completa.</p>
+          </div>
+        </div>
+        <div id="tablaMatriz"></div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ VALORES ═══════════════════════ -->
+    <section class="tab-panel" id="panel-valores" role="tabpanel" aria-labelledby="tab-btn-valores">
+
+      <div class="kpis value-kpis" id="valorKpis" style="margin-bottom:14px">
+        <div class="card">
+          <div class="k-label">Valor de recepción</div>
+          <div id="kValorTotal" class="k-value">-</div>
+          <div id="kValorTotalLabel" class="k-sub">cargando precios</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Precio promedio</div>
+          <div id="kPrecioProm" class="k-value">-</div>
+          <div id="kPrecioPromLabel" class="k-sub">ponderado por m³ valorizados</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Cobertura valorizada</div>
+          <div id="kCoberturaValor" class="k-value">-</div>
+          <div id="kCoberturaValorLabel" class="k-sub">m³ con precio sobre m³ ingresados</div>
+        </div>
+        <div class="card">
+          <div class="k-label">m³ sin precio</div>
+          <div id="kM3SinPrecio" class="k-value">-</div>
+          <div id="kM3SinPrecioLabel" class="k-sub">no se contabilizan en el valor</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Proveedor líder por valor</div>
+          <div id="kValorLider" class="k-value">-</div>
+          <div id="kValorLiderLabel" class="k-sub">mayor valor de recepción</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-head">
+          <h3>Valor de recepción por proveedor</h3>
+          <div class="pill-row">
+            <span id="valorStatus" class="pill">Cargando</span>
+            <span id="valorUnidad" class="pill">Unidad</span>
+          </div>
+        </div>
+        <div id="chartValorProveedores" class="chart"></div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:14px">
+        <div class="card flush">
+          <div class="card-head flush"><h3>Valor por proveedor</h3></div>
+          <div id="tablaValorProveedor"></div>
+        </div>
+        <div class="card flush">
+          <div class="card-head flush"><h3>Precio promedio por calidad</h3></div>
+          <div id="tablaValorCalidad"></div>
+        </div>
+      </div>
+
+      <div class="card flush">
+        <div class="card-head flush">
+          <div>
+            <h3>Recepciones sin precio en la hoja Valores</h3>
+            <p class="card-hint">
+              La clave buscada es el ROL y el diámetro tal como los arma el dashboard.
+              Debe calzar con la clave de la hoja Valores; guiones, puntos y espacios se ignoran.
+            </p>
+          </div>
+        </div>
+        <div id="tablaSinPrecio"></div>
+        <div id="valorHint" class="status" style="padding: 0 16px 14px"></div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════ APUNTES ═══════════════════════ -->
+    <section class="tab-panel" id="panel-apuntes" role="tabpanel" aria-labelledby="tab-btn-apuntes">
+
+      <div class="kpis" style="margin-bottom:14px">
+        <div class="card">
+          <div class="k-label">Apuntes abiertos</div>
+          <div id="kApuntesAbiertos" class="k-value">-</div>
+          <div id="kApuntesAbiertosLabel" class="k-sub">pendientes de respuesta</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Compromisos vencidos</div>
+          <div id="kApuntesVencidos" class="k-value">-</div>
+          <div class="k-sub">pasó la fecha comprometida</div>
+        </div>
+        <div class="card">
+          <div class="k-label">m³ comprometidos</div>
+          <div id="kApuntesM3" class="k-value">-</div>
+          <div class="k-sub">en apuntes abiertos o en curso</div>
+        </div>
+        <div class="card">
+          <div class="k-label">Proveedores con apuntes</div>
+          <div id="kApuntesProveedores" class="k-value">-</div>
+          <div class="k-sub">con al menos un registro</div>
+        </div>
+      </div>
+
+      <div class="apuntes-layout">
+        <div class="card" id="formApunteCard">
+          <div class="card-head">
+            <div>
+              <h3 id="formApunteTitulo">Nuevo apunte</h3>
+              <p class="card-hint">Se guarda en la hoja Apuntes de la misma planilla.</p>
+            </div>
+          </div>
+
+          <form class="form-grid" id="formApunte" onsubmit="return guardarApunteDesdeForm(event)">
+            <input type="hidden" id="apunteId">
+
+            <label class="field full">
+              <span>Proveedor</span>
+              <input id="apunteProveedor" list="listaProveedores" placeholder="Nombre del proveedor" autocomplete="off">
+            </label>
+            <datalist id="listaProveedores"></datalist>
+
+            <label class="field">
+              <span>Predio o faena</span>
+              <input id="apunteFaena" placeholder="Opcional" autocomplete="off">
+            </label>
+
+            <label class="field">
+              <span>Tipo</span>
+              <select id="apunteTipo">
+                <option>Pregunta</option>
+                <option>Compromiso</option>
+                <option>Riesgo</option>
+                <option>Reclamo</option>
+                <option>Nota</option>
+              </select>
+            </label>
+
+            <label class="field full">
+              <span>Pregunta u observación</span>
+              <textarea id="apuntePregunta" placeholder="Por ejemplo: por qué viene a la baja tres días seguidos y cómo recupera"></textarea>
+            </label>
+
+            <label class="field full">
+              <span>Respuesta o acuerdo</span>
+              <textarea id="apunteRespuesta" placeholder="Se completa cuando el proveedor responde" style="min-height:60px"></textarea>
+            </label>
+
+            <label class="field">
+              <span>Responsable</span>
+              <input id="apunteResponsable" placeholder="Quién hace seguimiento" autocomplete="off">
+            </label>
+
+            <label class="field">
+              <span>Fecha compromiso</span>
+              <input id="apunteFechaCompromiso" type="date">
+            </label>
+
+            <label class="field">
+              <span>m³ comprometidos</span>
+              <input id="apunteM3" type="number" min="0" step="1" placeholder="0">
+            </label>
+
+            <label class="field">
+              <span>Prioridad</span>
+              <select id="apuntePrioridad">
+                <option>Alta</option>
+                <option selected>Media</option>
+                <option>Baja</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Estado</span>
+              <select id="apunteEstado">
+                <option selected>Abierto</option>
+                <option>En curso</option>
+                <option>Cerrado</option>
+              </select>
+            </label>
+
+            <div class="full" style="display:flex; gap:8px; margin-top:2px">
+              <button class="btn-primary" type="submit" id="btnGuardarApunte">Guardar apunte</button>
+              <button class="btn-secondary" type="button" onclick="resetFormApunte()">Limpiar</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card flush">
+          <div class="card-head flush">
+            <div>
+              <h3>Bitácora</h3>
+              <p class="card-hint" id="apuntesHojaHint">Cargando la hoja de apuntes.</p>
+            </div>
+            <div class="segmented" role="group" aria-label="Filtrar apuntes">
+              <button type="button" aria-pressed="true" onclick="filtrarApuntes('')">Todos</button>
+              <button type="button" aria-pressed="false" onclick="filtrarApuntes('Abierto')">Abiertos</button>
+              <button type="button" aria-pressed="false" onclick="filtrarApuntes('En curso')">En curso</button>
+              <button type="button" aria-pressed="false" onclick="filtrarApuntes('Cerrado')">Cerrados</button>
+            </div>
+          </div>
+          <div id="listaApuntes" class="stack-sm" style="padding:14px; max-height:720px; overflow:auto"></div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <div id="presentBar">
+    <span class="live-dot" title="Datos en vivo"></span>
+    <button type="button" onclick="presentPrev()" title="Sección anterior">Anterior</button>
+    <button type="button" id="presentPauseBtn" onclick="togglePresentPause()" title="Pausar o reanudar">Pausar</button>
+    <button type="button" onclick="presentNext()" title="Sección siguiente">Siguiente</button>
+    <span id="presentInfo" class="present-info">-</span>
+    <button type="button" onclick="exitPresentation()" title="Salir (Esc)">Salir</button>
+  </div>
+
+  <?!= include('JsCore'); ?>
+  <?!= include('JsResumen'); ?>
+  <?!= include('JsPlan'); ?>
+  <?!= include('JsApuntes'); ?>
+  <?!= include('JsMapas'); ?>
+  <?!= include('JsValores'); ?>
+  <?!= include('JsPresentacion'); ?>
+  <?!= include('JsInit'); ?>
+</body>
+</html>
