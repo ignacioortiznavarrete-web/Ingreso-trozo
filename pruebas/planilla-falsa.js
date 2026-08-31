@@ -1,6 +1,9 @@
 /* Planilla simulada: replica la forma real de las hojas para poder ejecutar
    buildDashboardCore_ completo (plan, proyección, tendencias, apuntes). */
 
+// Cuatro largos distintos para poder probar la distribución y la apertura.
+const LARGOS = [2.44, 3.2, 4, 5.5];
+
 function hojaDatos() {
   const filas = [[
     'Fecha','Hora','Guia','Proveedor','Predio','Comuna','Rol','Cal Trz','Calidad',
@@ -34,7 +37,8 @@ function hojaDatos() {
         const cub = m3 * share;
         filas.push([
           new Date(2026, 7, dia), '08:30', 'G' + dia + j, prov, predios[prov], comunas[prov],
-          '251-' + (10 + j * 3 + (i % 3)), cal, nom, 24 + j, 3.2, Math.round(cub / 0.28), cub
+          '251-' + (10 + j * 3 + (i % 3)), cal, nom, 24 + j,
+          LARGOS[(i + j) % LARGOS.length], Math.round(cub / 0.28), cub
         ]);
       });
     });

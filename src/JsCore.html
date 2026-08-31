@@ -63,6 +63,77 @@ const PALETA = {
   ok: '#2D6A4F'
 };
 
+/* Paleta categórica para las aperturas por proveedor. Ocho tonos en orden
+   fijo: el orden es el mecanismo de seguridad para daltonismo, así que no se
+   reordena ni se cicla. Un noveno proveedor no inventa un tono nuevo, se
+   agrupa en "Otros".
+
+   Validada sobre superficie blanca en pares adyacentes (barras apiladas):
+   banda de luminosidad y piso de croma OK, peor par con protanopia dE 9,1
+   (objetivo 8) y peor par en visión normal dE 19,6 (piso 15). Tres tonos
+   quedan bajo 3:1 de contraste, lo que obliga a leyenda con valores y a una
+   vista de tabla: ambas están, en el tooltip y en el detalle del día. */
+const PALETA_SERIES = [
+  '#2A78D6', '#EB6834', '#1BAF7A', '#EDA100',
+  '#E87BA4', '#008300', '#4A3AA7', '#E34948'
+];
+
+const COLOR_OTROS = '#9AA8A0';
+
+/* El largo es una magnitud ordenada, no una identidad: le corresponde una
+   rampa de un solo tono que deje ver el orden en el color. Sale del verde de
+   marca (#2D6A4F es el forest2 del dashboard) y cumple luminosidad monótona,
+   un solo tono (5° de recorrido) y 2,13:1 en el extremo claro sobre blanco. */
+const RAMPA_LARGO = ['#8FBCA0', '#68A182', '#4A8767', '#2D6A4F', '#1B4A36'];
+
+function colorSerie(indice) {
+  return indice < PALETA_SERIES.length ? PALETA_SERIES[indice] : COLOR_OTROS;
+}
+
+// Interpola sobre los anclajes validados: con 5 largos devuelve los cinco tal
+// cual, y con menos toma los extremos para separar lo más posible.
+function coloresRampa(n) {
+  if (n <= 1) return [RAMPA_LARGO[RAMPA_LARGO.length - 1]];
+
+  const out = [];
+
+  for (let i = 0; i < n; i++) {
+    const t = (i / (n - 1)) * (RAMPA_LARGO.length - 1);
+    const bajo = Math.floor(t);
+    const alto = Math.min(RAMPA_LARGO.length - 1, bajo + 1);
+    out.push(mezclarHex(RAMPA_LARGO[bajo], RAMPA_LARGO[alto], t - bajo));
+  }
+
+  return out;
+}
+
+function mezclarHex(a, b, t) {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+
+  const par = (h, i) => parseInt(h.slice(1 + i * 2, 3 + i * 2), 16);
+  const canal = i => Math.round(par(a, i) + (par(b, i) - par(a, i)) * t);
+
+  return '#' + [0, 1, 2].map(i => canal(i).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+/* El color sigue a la entidad, nunca a su posición: el mapa de largos se
+   calcula sobre TODOS los largos del mes, así que filtrar no repinta los que
+   quedan. */
+function mapaColoresLargo() {
+  const fuente = (DATA && (DATA.detalleIngresos || DATA.recepciones)) || [];
+  const largos = [...new Set(fuente.map(x => Number(x.largo) || 0))]
+    .filter(v => v > 0)
+    .sort((a, b) => a - b);
+
+  const colores = coloresRampa(largos.length);
+  const mapa = {};
+
+  largos.forEach((largo, i) => { mapa[largo] = colores[i]; });
+
+  return mapa;
+}
+
 /* ══════════════════════ CARGA DE DATOS ══════════════════════ */
 
 function loadData(force) {

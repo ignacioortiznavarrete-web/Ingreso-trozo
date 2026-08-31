@@ -2,6 +2,8 @@
    Se inyecta en el <head> para que exista antes de los scripts de la app. */
 window.__errores = [];
 window.__charts = [];
+window.__listeners = [];
+window.__seleccion = [];
 window.__swal = [];
 
 window.addEventListener('error', e => window.__errores.push('onerror: ' + (e.message || e)));
@@ -13,8 +15,10 @@ console.error = function () {
 
 function ChartStub(el) { this.el = el; }
 ChartStub.prototype.draw = function (data, opts) {
-  window.__charts.push({ id: this.el && this.el.id, filas: data && data.filas });
+  window.__charts.push({ id: this.el && this.el.id, filas: data && data.filas,
+                         datos: data, opts: opts });
 };
+ChartStub.prototype.getSelection = function () { return window.__seleccion || []; };
 
 window.google = {
   charts: {
@@ -22,8 +26,11 @@ window.google = {
     setOnLoadCallback(cb) { setTimeout(cb, 0); }
   },
   visualization: {
-    arrayToDataTable: a => ({ filas: a.length - 1 }),
-    BarChart: ChartStub, ColumnChart: ChartStub, ComboChart: ChartStub
+    arrayToDataTable: a => ({ filas: a.length - 1, encabezado: a[0], cuerpo: a.slice(1) }),
+    BarChart: ChartStub, ColumnChart: ChartStub, ComboChart: ChartStub,
+    events: {
+      addListener(grafico, evento, cb) { window.__listeners.push({ grafico, evento, cb }); }
+    }
   },
   script: {
     url: { getLocation: cb => setTimeout(() => cb({ parameter: {} }), 0) },

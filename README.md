@@ -37,6 +37,13 @@ top 3 y HHI).
 reorganiza el contenido: Resumen, Plan de acción, Territorio, Detalle, Valores
 y Apuntes. Los filtros son compartidos y aplican a todas las pestañas.
 
+**Aperturas de la entrega diaria.** El gráfico del mes se puede apilar por
+proveedor, calidad o largo, y cada día se abre en su propio detalle. Ver más
+abajo.
+
+**Distribución de la cubicación por largo.** Cuánto de lo recibido viene en
+cada largo, con su participación, diámetro promedio y eficiencia.
+
 **Los mapas ya no frenan la carga.** Los KML y KMZ son lo más caro del
 dashboard: hay que listar Drive, descomprimir y parsear XML por cada predio.
 Ahora nada de eso ocurre al abrir la página. Ver más abajo.
@@ -162,6 +169,62 @@ riesgo = 45 x déficit de cumplimiento
 
 El peso en el plan es deliberado: un proveedor grande al 80% del plan hace más
 daño al mes que uno chico al 50%.
+
+---
+
+## Las aperturas de la entrega diaria
+
+El gráfico "Entrega diaria: m³ real contra meta diaria hábil" tiene dos
+aperturas distintas, que responden a dos preguntas distintas.
+
+### A lo largo del mes, por dimensión
+
+El selector **Aperturar por** apila las barras del mes:
+
+| Opción | Qué muestra |
+|---|---|
+| Total | Proyección de camiones, m³ reales y la meta. Es la vista por defecto |
+| Proveedor | Los 8 mayores del mes, cada uno con su color; el resto agrupado en "Otros" |
+| Calidad | Siniestrado, verde y manchado, con los colores que ya usa el dashboard |
+| Largo | Un paso de verde por largo, del más corto al más largo |
+
+En modo aperturado la proyección de camiones se oculta a propósito: apilarla
+sobre los m³ reales daría una columna cuya altura no significa nada. La meta
+diaria sigue como línea.
+
+### Por el día que toque
+
+Un clic en cualquier barra abre el detalle de ese día, debajo del gráfico:
+m³ recibidos, diferencia contra la meta, camiones equivalentes y trozos, más
+las tres aperturas del día en paralelo (proveedor, calidad y largo) con la
+participación de cada uno. El selector que está bajo el gráfico hace lo mismo
+sin depender de la precisión del puntero.
+
+### Los colores
+
+El color sigue a la entidad, no a su posición: se asigna sobre el mes
+completo, así que filtrar por un proveedor no repinta a los largos que quedan,
+y el mismo verde identifica al mismo largo en el gráfico de distribución, en
+el apilado y en el detalle del día.
+
+- **Proveedor** es identidad sin orden, así que usa una paleta categórica de 8
+  tonos en orden fijo. Está validada sobre fondo blanco en pares adyacentes:
+  peor par con protanopia dE 9,1 (objetivo 8) y en visión normal dE 19,6
+  (piso 15). Tres de sus tonos quedan bajo 3:1 de contraste, lo que obliga a
+  que los valores se puedan leer de otra forma: por eso el tooltip trae las
+  cifras y el detalle del día es una tabla.
+- **Largo** es una magnitud ordenada, así que usa una rampa de un solo tono
+  derivada del verde de marca (`#2D6A4F` es el `--forest2` del dashboard).
+  Cumple luminosidad monótona, un solo tono (5° de recorrido) y 2,13:1 en el
+  extremo claro sobre blanco.
+- **Calidad** conserva los colores semánticos que ya tenía el dashboard.
+
+Un noveno proveedor nunca genera un tono nuevo: se agrupa en "Otros". Para
+cambiar el corte, en `JsResumen.html`:
+
+```js
+const MAX_SERIES_APERTURA = 8;
+```
 
 ---
 

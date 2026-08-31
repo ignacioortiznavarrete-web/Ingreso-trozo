@@ -44,9 +44,11 @@ ChartStub.prototype.draw = function (data, opts) {
 function mk(nombre) { const F = function (el) { ChartStub.call(this, el); this._tipo = nombre; };
   F.prototype = Object.create(ChartStub.prototype); return F; }
 window.google.charts = { load(){}, setOnLoadCallback(cb){ setTimeout(cb, 30); } };
+ChartStub.prototype.getSelection = function () { return []; };
 window.google.visualization = {
   arrayToDataTable: a => ({ filas: a.length - 1 }),
-  BarChart: mk('Barras horizontales'), ColumnChart: mk('Columnas'), ComboChart: mk('Combo barras y línea')
+  BarChart: mk('Barras horizontales'), ColumnChart: mk('Columnas'), ComboChart: mk('Combo barras y línea'),
+  events: { addListener() {} }
 };
 const _ml = () => ({ addTo(){return this;}, clearLayers(){}, bindPopup(){return this;}, openPopup(){} });
 window.L = {

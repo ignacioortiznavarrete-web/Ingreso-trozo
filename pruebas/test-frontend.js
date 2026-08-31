@@ -209,7 +209,103 @@ setTimeout(() => {
     ok(win.__llamadas.getRolesIndex === llamadasAntes,
        'volver a la pestaña no vuelve a bajar todo', win.__llamadas.getRolesIndex);
 
-    console.log('\n12. Sin errores acumulados');
+    console.log('\n12. Distribución de la cubicación por largo');
+    win.activateTab('resumen');
+    const ultimo = id => [...win.__charts].reverse().find(c => c.id === id);
+
+    ok(!!ultimo('chartLargo'), 'el gráfico por largo se dibuja');
+    const filasLargo = q('tbody tr', $('tablaLargo'));
+    ok(filasLargo.length === 5, 'la tabla trae los 4 largos más el total', filasLargo.length);
+    ok(/2,44 m/.test($('tablaLargo').textContent), 'muestra los largos con su unidad');
+    ok(q('.punto-serie', $('tablaLargo')).length === 4, 'cada largo lleva su punto de color',
+       q('.punto-serie', $('tablaLargo')).length);
+    const coloresLargo = [...q('.punto-serie', $('tablaLargo'))].map(e => e.style.background);
+    ok(new Set(coloresLargo).size === 4, 'los cuatro colores son distintos', new Set(coloresLargo).size);
+    ok(/100%/.test($('tablaLargo').textContent), 'la fila de totales cierra en 100%');
+    ok(ultimo('chartLargo').filas === 4, 'el gráfico lleva una columna por largo',
+       ultimo('chartLargo').filas);
+
+    console.log('\n13. Apertura del gráfico del mes');
+    const cabecera = () => (ultimo('chartFecha').datos.encabezado || []).map(c =>
+      typeof c === 'string' ? c : '(rol)');
+
+    ok(!ultimo('chartFecha').opts.isStacked, 'por defecto no viene apilado');
+    ok(cabecera().includes('Proyección camiones m³'), 'y muestra la proyección de camiones');
+
+    win.aperturarEntrega('largo');
+    let c = ultimo('chartFecha');
+    ok(c.opts.isStacked === true, 'aperturar por largo apila las barras');
+    ok(cabecera().filter(x => /m$/.test(x)).length === 4, 'una serie por largo',
+       cabecera().filter(x => /m$/.test(x)).length);
+    ok(!cabecera().includes('Proyección camiones m³'),
+       'la proyección se oculta: no se puede apilar con los m³ reales');
+    ok(cabecera().some(x => /Meta diaria/.test(x)), 'la meta sigue como línea');
+    ok(/apiladas por largo/.test(txt('entregaHint')), 'el texto de ayuda lo explica', txt('entregaHint'));
+
+    win.aperturarEntrega('proveedor');
+    ok(cabecera().filter(x => /^[A-Z]/.test(x) && !/Día|Meta/.test(x)).length === 5,
+       'una serie por proveedor',
+       cabecera().filter(x => /^[A-Z]/.test(x) && !/Día|Meta/.test(x)).length);
+
+    win.aperturarEntrega('calidad');
+    ok(cabecera().includes('VERDE') && cabecera().includes('MANCHADO'),
+       'aperturar por calidad usa las calidades reales', cabecera().join(' | '));
+
+    const botones = [...q('.segmented button[data-apertura]')];
+    ok(botones.find(b => b.dataset.apertura === 'calidad').getAttribute('aria-pressed') === 'true',
+       'el botón activo queda marcado');
+
+    win.aperturarEntrega('');
+    ok(!ultimo('chartFecha').opts.isStacked, 'volver a Total desapila');
+    ok(cabecera().includes('Proyección camiones m³'), 'y devuelve la proyección');
+
+    console.log('\n14. Apertura por el día');
+    ok($('detalleDia').hidden, 'el detalle arranca cerrado');
+    ok(q('option', $('selectorDia')).length > 1, 'el selector de día se pobló',
+       q('option', $('selectorDia')).length);
+
+    win.abrirDetalleDia(3);
+    ok(!$('detalleDia').hidden, 'abrir un día muestra el panel');
+    ok(q('.dia-bloque').length === 3, 'trae las tres aperturas del día', q('.dia-bloque').length);
+    ok(/Por proveedor/.test($('detalleDia').textContent), 'apertura por proveedor');
+    ok(/Por calidad/.test($('detalleDia').textContent), 'apertura por calidad');
+    ok(/Por largo/.test($('detalleDia').textContent), 'apertura por largo');
+    ok(/día hábil 3/.test($('detalleDia').textContent), 'identifica el día hábil');
+    ok(/Camiones equivalentes/.test($('detalleDia').textContent), 'convierte a camiones');
+    ok($('selectorDia').value === '3', 'el selector queda sincronizado', $('selectorDia').value);
+    ok(!$('btnCerrarDia').hidden, 'aparece el botón de cerrar');
+
+    const puntosDia = q('.punto-serie', $('detalleDia'));
+    ok(puntosDia.length >= 6, 'cada fila del detalle lleva su color', puntosDia.length);
+
+    // El mismo largo debe conservar su color entre la tabla y el detalle.
+    const colorEnTabla = [...q('.punto-serie', $('tablaLargo'))].map(e => e.style.background);
+    const bloqueLargo = [...q('.dia-bloque')].find(b => /Por largo/.test(b.textContent));
+    const colorEnDia = [...q('.punto-serie', bloqueLargo)].map(e => e.style.background);
+    ok(colorEnDia.every(col => colorEnTabla.includes(col)),
+       'el color sigue al largo, no a su posición en la tabla');
+
+    // Un clic en una barra hace lo mismo que el selector.
+    win.cerrarDetalleDia();
+    ok($('detalleDia').hidden, 'cerrar oculta el panel');
+    const escucha = win.__listeners.filter(l => l.evento === 'select').pop();
+    ok(!!escucha, 'el gráfico registra el escuchador de clic');
+    win.__seleccion = [{ row: 4 }];
+    escucha.cb();
+    ok(!$('detalleDia').hidden && $('selectorDia').value === '5',
+       'el clic en la quinta barra abre ese día hábil', $('selectorDia').value);
+
+    // Filtrar no debe repintar a los que quedan.
+    const antesColor = [...q('.punto-serie', $('tablaLargo'))].map(e => e.style.background);
+    $('fProveedor').value = 'ANGOL';
+    win.renderAllFiltered();
+    const despuesColor = [...q('.punto-serie', $('tablaLargo'))].map(e => e.style.background);
+    ok(despuesColor.every(col => antesColor.includes(col)),
+       'filtrar no reasigna los colores de los largos');
+    win.limpiarFiltros();
+    win.cerrarDetalleDia();
+
+    console.log('\n15. Sin errores acumulados');
     ok(win.__errores.length === 0, 'ninguna excepción en toda la sesión',
        win.__errores.slice(0,4).join(' | ') || 'ninguna');
 

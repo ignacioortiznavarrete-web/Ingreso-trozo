@@ -191,12 +191,56 @@
         <div class="card-head">
           <div>
             <h3>Entrega diaria: m³ real contra meta diaria hábil</h3>
-            <p class="card-hint">La barra clara es la proyección de camiones; la línea roja es la meta diaria del plan.</p>
+            <p class="card-hint" id="entregaHint">
+              La barra clara es la proyección de camiones; la línea roja es la meta diaria del plan.
+            </p>
+          </div>
+          <div class="pill-row">
+            <span class="apertura-label">Aperturar por</span>
+            <div class="segmented" role="group" aria-label="Aperturar la entrega diaria">
+              <button type="button" data-apertura="" aria-pressed="true" onclick="aperturarEntrega('')">Total</button>
+              <button type="button" data-apertura="proveedor" aria-pressed="false" onclick="aperturarEntrega('proveedor')">Proveedor</button>
+              <button type="button" data-apertura="calidad" aria-pressed="false" onclick="aperturarEntrega('calidad')">Calidad</button>
+              <button type="button" data-apertura="largo" aria-pressed="false" onclick="aperturarEntrega('largo')">Largo</button>
+            </div>
+            <button class="chart-send" type="button"
+                    onclick="enviarGraficoASlides('entregaDiaria', 'Entrega diaria: m³ real vs meta diaria hábil')">Enviar a Slides</button>
+          </div>
+        </div>
+
+        <div id="chartFecha" class="chart tall"></div>
+
+        <div class="dia-selector">
+          <label class="field" style="max-width:320px">
+            <span>Abrir el detalle de un día</span>
+            <select id="selectorDia" onchange="abrirDetalleDia(this.value)"
+                    aria-label="Elegir el día hábil a detallar">
+              <option value="">Elige un día, o haz clic en una barra</option>
+            </select>
+          </label>
+          <button class="btn-secondary btn-sm" type="button" id="btnCerrarDia"
+                  onclick="cerrarDetalleDia()" hidden>Cerrar el detalle</button>
+        </div>
+
+        <div id="detalleDia" hidden></div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-head">
+          <div>
+            <h3>Distribución de la cubicación por largo</h3>
+            <p class="card-hint">
+              Cuánto de lo recibido viene en cada largo. El color se mantiene en el resto del
+              dashboard: el mismo verde identifica al mismo largo cuando se apertura la entrega diaria.
+            </p>
           </div>
           <button class="chart-send" type="button"
-                  onclick="enviarGraficoASlides('entregaDiaria', 'Entrega diaria: m³ real vs meta diaria hábil')">Enviar a Slides</button>
+                  onclick="enviarGraficoASlides('distribucionLargo', 'Distribución de la cubicación por largo')">Enviar a Slides</button>
         </div>
-        <div id="chartFecha" class="chart tall"></div>
+        <div class="grid-main">
+          <div id="chartLargo" class="chart"></div>
+          <div id="tablaLargo"></div>
+        </div>
       </div>
 
       <div class="grid-main" style="margin-bottom:14px">

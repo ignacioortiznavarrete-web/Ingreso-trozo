@@ -22,7 +22,8 @@ const SLIDES_CHARTS = {
   topProveedores: { titulo: 'Top proveedores por cubicación' },
   calidadTrozos: { titulo: 'Trozos por calidad' },
   calidadCubicacion: { titulo: 'Cubicación por calidad' },
-  brechaProveedores: { titulo: 'Brecha vs plan a fecha por proveedor' }
+  brechaProveedores: { titulo: 'Brecha vs plan a fecha por proveedor' },
+  distribucionLargo: { titulo: 'Distribución de la cubicación por largo' }
 };
 
 function extractSlidesId_(url) {
@@ -221,8 +222,29 @@ function actualizarGraficosPresentacion(force) {
     sh.getRange(1, 15, brechaTabla.length, 2).setValues(brechaTabla);
   }
 
+  // ── Bloque 6: distribución de la cubicación por largo ──
+  // Se agrega desde la matriz diámetro por largo, que ya viaja en el resumen.
+  const porLargo = {};
+  (data.matriz || []).forEach(m => {
+    const largo = Number(m.largo) || 0;
+    if (!largo) return;
+    porLargo[largo] = (porLargo[largo] || 0) + (Number(m.cubicacion) || 0);
+  });
+
+  const largoTabla = [['Largo', 'm³']].concat(
+    Object.keys(porLargo)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map(largo => [String(largo) + ' m', Math.round(porLargo[largo])])
+  );
+
+  if (largoTabla.length > 1) {
+    sh.getRange(1, 18, largoTabla.length, 2).setValues(largoTabla);
+  }
+
   // ── Gráficos incrustados (mismos colores del dashboard) ──
-  const chartRowStart = Math.max(entrega.length, top.length, calidadTrozos.length, brechaTabla.length) + 3;
+  const chartRowStart = Math.max(entrega.length, top.length, calidadTrozos.length,
+                                 brechaTabla.length, largoTabla.length) + 3;
 
   sh.insertChart(
     sh.newChart()
@@ -297,6 +319,23 @@ function actualizarGraficosPresentacion(force) {
         .setOption('hAxis', { title: 'm³ sobre (+) o bajo (-) el plan a fecha' })
         .setOption('width', 900)
         .setOption('height', 460)
+        .build()
+    );
+  }
+
+  if (largoTabla.length > 1) {
+    sh.insertChart(
+      sh.newChart()
+        .setChartType(Charts.ChartType.COLUMN)
+        .addRange(sh.getRange(1, 18, largoTabla.length, 2))
+        .setPosition(chartRowStart + 96, 1, 0, 0)
+        .setOption('title', 'Distribución de la cubicación por largo' + (monthLabel ? ' · ' + monthLabel : ''))
+        .setOption('colors', ['#2D6A4F'])
+        .setOption('legend', { position: 'none' })
+        .setOption('vAxis', { title: 'm³' })
+        .setOption('hAxis', { title: 'Largo' })
+        .setOption('width', 900)
+        .setOption('height', 420)
         .build()
     );
   }
