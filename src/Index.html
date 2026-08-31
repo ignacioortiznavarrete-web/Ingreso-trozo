@@ -41,6 +41,9 @@
       </div>
       <button class="btn-ghost-light btn-hide-present" type="button" onclick="loadData(true)">Actualizar</button>
       <button class="btn-ghost-light btn-hide-present" type="button" onclick="exportCSV()">Exportar</button>
+      <button class="btn-ghost-light" type="button" id="btnValores" aria-pressed="true"
+              onclick="toggleValoresGraficos()"
+              title="Mostrar u ocultar el valor de cada barra en todos los gráficos">Ocultar valores</button>
       <button class="btn-ghost-light" type="button" onclick="togglePresentation()">Presentar</button>
     </div>
   </header>
@@ -193,6 +196,11 @@
             <h3>Entrega diaria: m³ real contra meta diaria hábil</h3>
             <p class="card-hint" id="entregaHint">
               La barra clara es la proyección de camiones; la línea roja es la meta diaria del plan.
+            </p>
+            <p class="card-hint">
+              Cada barra muestra sus m³. Aperturada, cada segmento muestra los suyos y los muy
+              chicos quedan sin cifra para que no se pisen. El botón <b>Ocultar valores</b> del
+              encabezado las apaga en todos los gráficos.
             </p>
           </div>
           <div class="pill-row">

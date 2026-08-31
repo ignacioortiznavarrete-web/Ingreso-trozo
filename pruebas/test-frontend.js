@@ -305,7 +305,73 @@ setTimeout(() => {
     win.limpiarFiltros();
     win.cerrarDetalleDia();
 
-    console.log('\n15. Sin errores acumulados');
+    console.log('\n15. Valores dentro de los gráficos');
+    const g = id => [...win.__charts].reverse().find(c => c.id === id);
+    const anotaciones = c => (c.datos.cuerpo || [])
+      .flat()
+      .filter(v => typeof v === 'string' && /\d/.test(v));
+
+    win.aperturarEntrega('');
+    ok(!!g('chartFecha').datos.encabezado.find(c => c && c.role === 'annotation'),
+       'la entrega diaria ahora rotula los m³ reales');
+    ok(anotaciones(g('chartFecha')).some(v => /m³|\d/.test(v)),
+       'y las etiquetas traen cifras');
+    ok(g('chartFecha').opts.annotations.alwaysOutside === true,
+       'en modo total la etiqueta va al extremo de la barra, donde siempre se lee');
+    ok(g('chartFecha').opts.vAxis.viewWindow.max > 0,
+       'el eje deja holgura para que la etiqueta mayor no se corte',
+       Math.round(g('chartFecha').opts.vAxis.viewWindow.max));
+
+    win.aperturarEntrega('largo');
+    const apilado = g('chartFecha');
+    ok(apilado.opts.annotations.alwaysOutside === false,
+       'apilado: la etiqueta va dentro del segmento');
+    const tintas = Object.values(apilado.opts.series)
+      .filter(x => x.annotations)
+      .map(x => x.annotations.textStyle.color);
+    ok(tintas.length === 4, 'cada serie define su propia tinta', tintas.length);
+    ok(new Set(tintas).size > 1,
+       'la tinta cambia según el relleno: blanco sobre verde oscuro, oscuro sobre verde claro',
+       tintas.join(', '));
+    ok(win.tintaSobre('#1B4A36') === '#FFFFFF', 'sobre relleno oscuro, tinta blanca');
+    ok(win.tintaSobre('#8FBCA0') === '#1B2A21', 'sobre relleno claro, tinta oscura');
+    win.aperturarEntrega('');
+
+    ['chartTopProveedores', 'chartBrecha', 'chartCalidadTrozos',
+     'chartCalidadCubicacion', 'chartLargo'].forEach(id => {
+      const c = g(id);
+      ok(!!c && c.opts.annotations && c.opts.annotations.textStyle.bold,
+         'rotula sus valores: ' + id);
+    });
+
+    ok(g('chartTopProveedores').opts.hAxis.viewWindow.max > 0,
+       'top proveedores deja holgura en el eje');
+    ok(g('chartBrecha').opts.hAxis.viewWindow.min < 0 &&
+       g('chartBrecha').opts.hAxis.viewWindow.max > 0,
+       'la brecha deja holgura a ambos lados del cero');
+
+    // El interruptor apaga las cifras sin romper nada.
+    win.toggleValoresGraficos();
+    ok(win.eval('VALORES_EN_GRAFICOS') === false, 'el interruptor apaga los valores');
+    ok(anotaciones(g('chartTopProveedores')).length === 0,
+       'y las etiquetas desaparecen', anotaciones(g('chartTopProveedores')).length);
+    ok($('btnValores').textContent === 'Mostrar valores', 'el botón cambia de texto',
+       $('btnValores').textContent);
+    win.toggleValoresGraficos();
+    ok(anotaciones(g('chartTopProveedores')).length > 0, 'y vuelven al encenderlo',
+       anotaciones(g('chartTopProveedores')).length);
+
+    // En presentación la tipografía sube.
+    const antesFuente = g('chartTopProveedores').opts.annotations.textStyle.fontSize;
+    win.eval('PRESENT.active = true');
+    win.renderChartsForActiveTab();
+    ok(g('chartTopProveedores').opts.annotations.textStyle.fontSize > antesFuente,
+       'en modo presentación la cifra se agranda',
+       antesFuente + ' -> ' + g('chartTopProveedores').opts.annotations.textStyle.fontSize);
+    win.eval('PRESENT.active = false');
+    win.renderChartsForActiveTab();
+
+    console.log('\n16. Sin errores acumulados');
     ok(win.__errores.length === 0, 'ninguna excepción en toda la sesión',
        win.__errores.slice(0,4).join(' | ') || 'ninguna');
 

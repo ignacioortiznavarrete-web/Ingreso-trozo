@@ -134,6 +134,97 @@ function mapaColoresLargo() {
   return mapa;
 }
 
+/* ══════════════════════ ETIQUETAS DE VALOR ══════════════════════ */
+
+/* Los gráficos se llevan a presentaciones, así que cada marca muestra su
+   valor sin depender del tooltip. Se puede apagar desde el encabezado del
+   Resumen cuando la densidad estorba. */
+let VALORES_EN_GRAFICOS = true;
+
+function toggleValoresGraficos() {
+  VALORES_EN_GRAFICOS = !VALORES_EN_GRAFICOS;
+
+  const btn = document.getElementById('btnValores');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(VALORES_EN_GRAFICOS));
+    btn.textContent = VALORES_EN_GRAFICOS ? 'Ocultar valores' : 'Mostrar valores';
+  }
+
+  renderChartsForActiveTab();
+}
+
+// Devuelve la etiqueta, o null si el usuario apagó los valores. Google Charts
+// omite la anotación cuando la celda viene nula.
+function etiquetaValor(texto) {
+  return VALORES_EN_GRAFICOS ? texto : null;
+}
+
+// En presentación el gráfico se mira de lejos: la tipografía sube.
+function tamanoEtiqueta(base) {
+  return (typeof PRESENT !== 'undefined' && PRESENT.active) ? base + 3 : base;
+}
+
+/* Etiquetas al extremo de la marca, en tinta oscura. Legibles para cualquier
+   tamaño de barra, a diferencia de una etiqueta blanca dentro de una barra
+   corta, que queda sobre el fondo y desaparece. */
+function anotacionesFuera(base) {
+  return {
+    alwaysOutside: true,
+    stem: { color: 'transparent', length: 3 },
+    textStyle: {
+      color: PALETA.text,
+      fontName: 'Inter',
+      fontSize: tamanoEtiqueta(base || 11),
+      bold: true,
+      auraColor: '#FFFFFF'
+    }
+  };
+}
+
+/* Dentro de la marca. Solo se usa donde no hay afuera: en apilados. La tinta
+   la decide el color de relleno, no el gusto. */
+function anotacionesDentro(colorRelleno, base) {
+  return {
+    alwaysOutside: false,
+    stem: { color: 'transparent', length: 0 },
+    textStyle: {
+      color: tintaSobre(colorRelleno),
+      fontName: 'Inter',
+      fontSize: tamanoEtiqueta(base || 10),
+      bold: true,
+      auraColor: 'none'
+    }
+  };
+}
+
+// Luminancia relativa WCAG: decide si sobre ese relleno se lee mejor blanco o
+// tinta oscura. Es una regla calculada, no una elección a ojo.
+function tintaSobre(hex) {
+  const canal = i => {
+    const v = parseInt(String(hex).slice(1 + i * 2, 3 + i * 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+
+  const luminancia = 0.2126 * canal(0) + 0.7152 * canal(1) + 0.0722 * canal(2);
+
+  return luminancia > 0.42 ? '#1B2A21' : '#FFFFFF';
+}
+
+/* Holgura al final del eje para que la etiqueta del valor mayor no quede
+   cortada contra el borde del área de dibujo. */
+function holguraEje(maximo, factor) {
+  const max = Number(maximo) || 0;
+  if (!max) return {};
+  return { viewWindow: { max: max * (factor || 1.15) } };
+}
+
+// Con muchas barras las etiquetas se pisan. Se etiqueta uno de cada n para que
+// sigan siendo legibles en vez de convertirse en una mancha.
+function pasoEtiquetas(cantidad, maximoLegible) {
+  const tope = maximoLegible || 16;
+  return cantidad <= tope ? 1 : Math.ceil(cantidad / tope);
+}
+
 /* ══════════════════════ CARGA DE DATOS ══════════════════════ */
 
 function loadData(force) {

@@ -705,30 +705,35 @@ function renderCalidadCharts(stats) {
   if (isVisible('chartCalidadTrozos')) {
     const tabla = google.visualization.arrayToDataTable([
       ['Calidad', 'Trozos', { type: 'string', role: 'style' }, { type: 'string', role: 'annotation' }],
-      ...calidades.map(x => [x.calidad, Number(x.trozos) || 0, qualityColor(x.calidad), fmt0(x.trozos)])
+      ...calidades.map(x => [x.calidad, Number(x.trozos) || 0, qualityColor(x.calidad), etiquetaValor(fmt0(x.trozos))])
     ]);
 
     new google.visualization.BarChart(document.getElementById('chartCalidadTrozos')).draw(tabla, {
       ...OPCIONES_BASE,
-      chartArea: { width: '68%', height: '78%' },
-      hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
-      vAxis: { textStyle: { color: PALETA.text, fontSize: 12 } },
-      annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+      chartArea: { width: '66%', height: '78%' },
+      hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: tamanoEtiqueta(11) },
+               gridlines: { color: '#EEF2EF' },
+               ...holguraEje(Math.max(0, ...calidades.map(x => Number(x.trozos) || 0))) },
+      vAxis: { textStyle: { color: PALETA.text, fontSize: tamanoEtiqueta(12) } },
+      annotations: anotacionesFuera(11)
     });
   }
 
   if (isVisible('chartCalidadCubicacion')) {
     const tabla = google.visualization.arrayToDataTable([
       ['Calidad', 'm³', { type: 'string', role: 'style' }, { type: 'string', role: 'annotation' }],
-      ...calidades.map(x => [x.calidad, Number(x.cubicacion) || 0, qualityColor(x.calidad), fmt0(x.cubicacion)])
+      ...calidades.map(x => [x.calidad, Number(x.cubicacion) || 0, qualityColor(x.calidad),
+                             etiquetaValor(fmt0(x.cubicacion) + ' m³')])
     ]);
 
     new google.visualization.ColumnChart(document.getElementById('chartCalidadCubicacion')).draw(tabla, {
       ...OPCIONES_BASE,
-      chartArea: { width: '82%', height: '74%' },
-      vAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
-      hAxis: { textStyle: { color: PALETA.text, fontSize: 12 } },
-      annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+      chartArea: { width: '82%', height: '72%' },
+      vAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: tamanoEtiqueta(11) },
+               gridlines: { color: '#EEF2EF' },
+               ...holguraEje(Math.max(0, ...calidades.map(x => Number(x.cubicacion) || 0))) },
+      hAxis: { textStyle: { color: PALETA.text, fontSize: tamanoEtiqueta(12) } },
+      annotations: anotacionesFuera(11)
     });
   }
 }
@@ -757,16 +762,18 @@ function renderTopProveedoresChart(rows) {
 
   const tabla = google.visualization.arrayToDataTable([
     ['Proveedor', 'm³', { type: 'string', role: 'annotation' }],
-    ...top.map(x => [x.proveedor, x.cubicacion, fmt0(x.cubicacion)])
+    ...top.map(x => [x.proveedor, x.cubicacion, etiquetaValor(fmt0(x.cubicacion) + ' m³')])
   ]);
 
   new google.visualization.BarChart(document.getElementById('chartTopProveedores')).draw(tabla, {
     ...OPCIONES_BASE,
-    chartArea: { width: '56%', height: '86%' },
+    chartArea: { width: '54%', height: '86%' },
     colors: [PALETA.forest2],
-    hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
-    vAxis: { textStyle: { color: PALETA.text, fontSize: 11 } },
-    annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+    hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: tamanoEtiqueta(11) },
+             gridlines: { color: '#EEF2EF' },
+             ...holguraEje(Math.max(0, ...top.map(x => x.cubicacion)), 1.2) },
+    vAxis: { textStyle: { color: PALETA.text, fontSize: tamanoEtiqueta(11) } },
+    annotations: anotacionesFuera(11)
   });
 }
 
@@ -793,20 +800,24 @@ function renderBrechaChart() {
       f.proveedor,
       Math.round(f.brecha),
       f.brecha < 0 ? PALETA.critico : PALETA.forest2,
-      fmtSigned0(f.brecha)
+      etiquetaValor(fmtSigned0(f.brecha))
     ])
   ]);
 
+  // Diverge a ambos lados del cero: la holgura va en los dos extremos.
+  const extremo = Math.max(1, ...filas.map(f => Math.abs(f.brecha))) * 1.34;
+
   new google.visualization.BarChart(document.getElementById('chartBrecha')).draw(tabla, {
     ...OPCIONES_BASE,
-    chartArea: { width: '56%', height: '86%' },
+    chartArea: { width: '54%', height: '86%' },
     hAxis: {
-      textStyle: { color: PALETA.muted, fontSize: 11 },
+      textStyle: { color: PALETA.muted, fontSize: tamanoEtiqueta(11) },
       gridlines: { color: '#EEF2EF' },
-      baselineColor: PALETA.muted
+      baselineColor: PALETA.muted,
+      viewWindow: { min: -extremo, max: extremo }
     },
-    vAxis: { textStyle: { color: PALETA.text, fontSize: 11 } },
-    annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+    vAxis: { textStyle: { color: PALETA.text, fontSize: tamanoEtiqueta(11) } },
+    annotations: anotacionesFuera(11)
   });
 }
 
@@ -975,9 +986,17 @@ function drawTimeChart(rows) {
   DIAS_DEL_GRAFICO = [];
   const filas = [];
 
+  // Con muchos días las etiquetas se pisan: se rotula uno de cada n.
+  const paso = pasoEtiquetas(diasGrafico, dimension ? 12 : 24);
+  const maxReal = Math.max(0, ...Object.values(realPorDia), metaDiaria);
+
+  // Un segmento apilado solo se rotula si tiene alto para contener el texto.
+  const minSegmento = maxReal * 0.07;
+
   for (let dia = 1; dia <= diasGrafico; dia++) {
     const etiqueta = diaCalendarioPorHabil[dia] || String(dia);
     const real = realPorDia[dia] || 0;
+    const rotula = VALORES_EN_GRAFICOS && (DIAS_DEL_GRAFICO.length % paso === 0);
     DIAS_DEL_GRAFICO.push(dia);
 
     if (dimension) {
@@ -986,6 +1005,7 @@ function drawTimeChart(rows) {
       series.forEach(serie => {
         const m3 = (porDiaYSerie[dia] || {})[serie.clave] || 0;
         fila.push(m3);
+        fila.push(rotula && m3 >= minSegmento ? fmt0(m3) : null);
         fila.push(tooltipSegmento(etiqueta, dia, serie, m3, real, metaDiaria));
       });
 
@@ -1006,7 +1026,12 @@ function drawTimeChart(rows) {
       m3SinPrecio: m3SinPrecioPorDia[dia] || 0
     });
 
-    filas.push([etiqueta, proyeccion, tooltip, real, tooltip, metaDiaria]);
+    filas.push([
+      etiqueta,
+      proyeccion, tooltip,
+      real, (rotula && real ? fmt0(real) : null), tooltip,
+      metaDiaria
+    ]);
   }
 
   poblarSelectorDia(DIAS_DEL_GRAFICO, diaCalendarioPorHabil, realPorDia);
@@ -1018,15 +1043,25 @@ function drawTimeChart(rows) {
   if (dimension) {
     series.forEach(serie => {
       encabezado.push(serie.etiqueta);
+      encabezado.push({ type: 'string', role: 'annotation' });
       encabezado.push({ type: 'string', role: 'tooltip', p: { html: true } });
     });
     encabezado.push(metaLabel);
 
     colores = series.map(s => s.color).concat([PALETA.critico]);
-    opcionesSeries = { [series.length]: { type: 'line', lineWidth: 2, pointSize: 0, lineDashStyle: [5, 4] } };
+
+    // Apilado: la etiqueta no tiene un "afuera" al que salir, así que va
+    // dentro del segmento con la tinta que le corresponda a ese relleno.
+    opcionesSeries = {};
+    series.forEach((serie, i) => {
+      opcionesSeries[i] = { annotations: anotacionesDentro(serie.color, 10) };
+    });
+    opcionesSeries[series.length] = { type: 'line', lineWidth: 2, pointSize: 0, lineDashStyle: [5, 4] };
   } else {
     encabezado.push('Proyección camiones m³', { type: 'string', role: 'tooltip', p: { html: true } });
-    encabezado.push('m³ real', { type: 'string', role: 'tooltip', p: { html: true } });
+    encabezado.push('m³ real',
+      { type: 'string', role: 'annotation' },
+      { type: 'string', role: 'tooltip', p: { html: true } });
     encabezado.push(metaLabel);
 
     colores = ['#DCE5DF', PALETA.forest2, PALETA.critico];
@@ -1044,18 +1079,29 @@ function drawTimeChart(rows) {
     abrirDetalleDia(DIAS_DEL_GRAFICO[seleccion[0].row]);
   });
 
+  // El apilado sube hasta el total del día, no hasta el mayor de una serie.
+  const maxEje = dimension
+    ? Math.max(metaDiaria, ...Object.values(realPorDia))
+    : Math.max(metaDiaria, ...Object.values(realPorDia), ...Object.values(proyeccionPorDia));
+
   grafico.draw(tabla, {
     ...OPCIONES_BASE,
     legend: { position: 'top', alignment: 'start', maxLines: 3,
-              textStyle: { color: PALETA.text, fontSize: 11.5 } },
+              textStyle: { color: PALETA.text, fontSize: tamanoEtiqueta(11.5) } },
     colors: colores,
     seriesType: 'bars',
     series: opcionesSeries,
     isStacked: Boolean(dimension),
     bar: { groupWidth: '76%' },
-    vAxis: { title: 'm³', minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 },
-             gridlines: { color: '#EEF2EF' } },
-    hAxis: { title: 'Día del mes (solo días hábiles)', textStyle: { fontSize: 10.5, color: PALETA.muted },
+    annotations: dimension ? { alwaysOutside: false } : anotacionesFuera(11),
+    vAxis: {
+      title: 'm³', minValue: 0,
+      textStyle: { color: PALETA.muted, fontSize: tamanoEtiqueta(11) },
+      gridlines: { color: '#EEF2EF' },
+      ...holguraEje(maxEje, dimension ? 1.06 : 1.16)
+    },
+    hAxis: { title: 'Día del mes (solo días hábiles)',
+             textStyle: { fontSize: tamanoEtiqueta(10.5), color: PALETA.muted },
              titleTextStyle: { color: PALETA.muted, italic: false, fontSize: 11 } },
     tooltip: { isHtml: true },
     chartArea: { width: '90%', height: dimension ? '66%' : '72%' }
@@ -1422,7 +1468,9 @@ function renderChartLargo(stats) {
       fmt(x.largo) + ' m',
       x.cubicacion,
       colores[x.largo] || COLOR_OTROS,
-      fmtPercent(x.participacion),
+      etiquetaValor(lista.length <= 5
+        ? fmt0(x.cubicacion) + ' m³  ·  ' + fmtPercent(x.participacion)
+        : fmt0(x.cubicacion)),
       '<div style="padding:10px 12px;font:400 12px Inter,Arial,sans-serif;min-width:200px">' +
         '<div style="font-weight:700;color:#1E4D38;margin-bottom:6px">Largo ' + fmt(x.largo) + ' m</div>' +
         filaTooltip('m³', fmt0(x.cubicacion) + ' m³') +
@@ -1436,13 +1484,14 @@ function renderChartLargo(stats) {
 
   new google.visualization.ColumnChart(document.getElementById('chartLargo')).draw(tabla, {
     ...OPCIONES_BASE,
-    chartArea: { width: '84%', height: '74%' },
-    vAxis: { title: 'm³', minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 },
-             gridlines: { color: '#EEF2EF' } },
-    hAxis: { title: 'Largo', textStyle: { color: PALETA.text, fontSize: 11.5 },
+    chartArea: { width: '84%', height: '72%' },
+    vAxis: { title: 'm³', minValue: 0, textStyle: { color: PALETA.muted, fontSize: tamanoEtiqueta(11) },
+             gridlines: { color: '#EEF2EF' },
+             ...holguraEje(Math.max(0, ...lista.map(x => x.cubicacion)), 1.18) },
+    hAxis: { title: 'Largo', textStyle: { color: PALETA.text, fontSize: tamanoEtiqueta(11.5) },
              titleTextStyle: { color: PALETA.muted, italic: false, fontSize: 11 } },
     tooltip: { isHtml: true },
-    annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+    annotations: anotacionesFuera(11)
   });
 }
 </script>

@@ -44,6 +44,9 @@ abajo.
 **Distribución de la cubicación por largo.** Cuánto de lo recibido viene en
 cada largo, con su participación, diámetro promedio y eficiencia.
 
+**Los gráficos muestran sus cifras.** Cada barra lleva su valor a la vista,
+para poder llevarlas a una presentación sin depender del tooltip.
+
 **Los mapas ya no frenan la carga.** Los KML y KMZ son lo más caro del
 dashboard: hay que listar Drive, descomprimir y parsear XML por cada predio.
 Ahora nada de eso ocurre al abrir la página. Ver más abajo.
@@ -225,6 +228,35 @@ cambiar el corte, en `JsResumen.html`:
 ```js
 const MAX_SERIES_APERTURA = 8;
 ```
+
+---
+
+## Las cifras en los gráficos
+
+Los gráficos se usan en presentaciones, donde nadie va a pasar el mouse por
+encima. Cada marca muestra su valor, con una regla simple:
+
+| Situación | Dónde va la cifra |
+|---|---|
+| Barra o columna simple | Al extremo de la marca, en tinta oscura |
+| Segmento de una barra apilada | Dentro del segmento, en blanco o en tinta oscura según el relleno |
+| Segmento demasiado chico | Sin cifra: el valor queda en el tooltip y en el detalle del día |
+
+La tinta de las etiquetas de adentro **se calcula**, no se elige: se mide la
+luminancia relativa del relleno y por sobre 0,42 se usa tinta oscura. Por eso
+en la apertura por largo los segmentos claros llevan texto oscuro y los
+oscuros texto blanco, sin tener que mantener una lista a mano.
+
+Los ejes llevan holgura al final para que la etiqueta del valor mayor no
+quede cortada contra el borde del área de dibujo, que es lo que pasa con la
+opción `alwaysOutside` de Google Charts si no se reserva ese espacio.
+
+El botón **Ocultar valores** del encabezado las apaga en todos los gráficos a
+la vez, para cuando la densidad estorbe. En modo presentación la tipografía de
+las cifras y los ejes crece automáticamente.
+
+Los gráficos que se envían a Google Slides llevan las mismas cifras, activadas
+con `dataLabel` en `Slides.gs`.
 
 ---
 

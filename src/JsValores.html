@@ -340,16 +340,18 @@ function renderValorChart(stats) {
 
   const tabla = google.visualization.arrayToDataTable([
     ['Proveedor', 'Valor recepción', { type: 'string', role: 'annotation' }],
-    ...top.map(x => [x.proveedor, x.valor, fmtCLP(x.valor)])
+    ...top.map(x => [x.proveedor, x.valor, etiquetaValor(fmtCLP(x.valor))])
   ]);
 
   new google.visualization.BarChart(document.getElementById('chartValorProveedores')).draw(tabla, {
     ...OPCIONES_BASE,
-    chartArea: { width: '56%', height: '86%' },
+    chartArea: { width: '54%', height: '86%' },
     colors: [PALETA.forest],
-    hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: 11 }, gridlines: { color: '#EEF2EF' } },
-    vAxis: { textStyle: { color: PALETA.text, fontSize: 11 } },
-    annotations: { alwaysOutside: true, textStyle: { color: PALETA.text, fontSize: 11, bold: true } }
+    hAxis: { minValue: 0, textStyle: { color: PALETA.muted, fontSize: tamanoEtiqueta(11) },
+             gridlines: { color: '#EEF2EF' },
+             ...holguraEje(Math.max(0, ...top.map(x => x.valor)), 1.24) },
+    vAxis: { textStyle: { color: PALETA.text, fontSize: tamanoEtiqueta(11) } },
+    annotations: anotacionesFuera(11)
   });
 }
 

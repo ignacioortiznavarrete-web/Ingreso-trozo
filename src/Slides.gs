@@ -253,12 +253,13 @@ function actualizarGraficosPresentacion(force) {
       .setPosition(chartRowStart, 1, 0, 0)
       .setOption('title', 'Entrega diaria: m³ real vs meta diaria hábil' + (monthLabel ? ' · ' + monthLabel : ''))
       .setOption('seriesType', 'bars')
+      .setOption('legend', { position: 'top' })
+      // Los gráficos de Slides se leen proyectados: la cifra va sobre la barra.
       .setOption('series', {
         0: { color: '#DCE5DF' },
-        1: { color: '#2D6A4F' },
+        1: { color: '#2D6A4F', dataLabel: 'value' },
         2: { type: 'line', color: '#B3261E' }
       })
-      .setOption('legend', { position: 'top' })
       .setOption('hAxis', { title: 'Día del mes (días hábiles)' })
       .setOption('vAxis', { title: 'm³' })
       .setOption('width', 900)
@@ -273,6 +274,7 @@ function actualizarGraficosPresentacion(force) {
       .setPosition(chartRowStart + 24, 1, 0, 0)
       .setOption('title', 'Top proveedores por cubicación' + (monthLabel ? ' · ' + monthLabel : ''))
       .setOption('colors', ['#2D6A4F'])
+      .setOption('series', { 0: { dataLabel: 'value' } })
       .setOption('legend', { position: 'none' })
       .setOption('hAxis', { title: 'm³' })
       .setOption('width', 900)
@@ -287,6 +289,7 @@ function actualizarGraficosPresentacion(force) {
       .setPosition(chartRowStart + 48, 1, 0, 0)
       .setOption('title', 'Trozos por calidad' + (monthLabel ? ' · ' + monthLabel : ''))
       .setOption('colors', ['#52796F'])
+      .setOption('series', { 0: { dataLabel: 'value' } })
       .setOption('legend', { position: 'none' })
       .setOption('width', 700)
       .setOption('height', 380)
@@ -300,6 +303,7 @@ function actualizarGraficosPresentacion(force) {
       .setPosition(chartRowStart + 48, 8, 0, 0)
       .setOption('title', 'Cubicación por calidad' + (monthLabel ? ' · ' + monthLabel : ''))
       .setOption('colors', ['#2D6A4F'])
+      .setOption('series', { 0: { dataLabel: 'value' } })
       .setOption('legend', { position: 'none' })
       .setOption('vAxis', { title: 'm³' })
       .setOption('width', 700)
@@ -315,6 +319,7 @@ function actualizarGraficosPresentacion(force) {
         .setPosition(chartRowStart + 72, 1, 0, 0)
         .setOption('title', 'Brecha vs plan a fecha por proveedor' + (monthLabel ? ' · ' + monthLabel : ''))
         .setOption('colors', ['#B3261E'])
+        .setOption('series', { 0: { dataLabel: 'value' } })
         .setOption('legend', { position: 'none' })
         .setOption('hAxis', { title: 'm³ sobre (+) o bajo (-) el plan a fecha' })
         .setOption('width', 900)
@@ -331,6 +336,7 @@ function actualizarGraficosPresentacion(force) {
         .setPosition(chartRowStart + 96, 1, 0, 0)
         .setOption('title', 'Distribución de la cubicación por largo' + (monthLabel ? ' · ' + monthLabel : ''))
         .setOption('colors', ['#2D6A4F'])
+        .setOption('series', { 0: { dataLabel: 'value' } })
         .setOption('legend', { position: 'none' })
         .setOption('vAxis', { title: 'm³' })
         .setOption('hAxis', { title: 'Largo' })
