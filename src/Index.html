@@ -251,6 +251,29 @@
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-head">
+          <div>
+            <h3>Distribución de la cubicación por diámetro</h3>
+            <p class="card-hint">
+              El diámetro es una medida continua, así que esto es un histograma: cuando hay muchos
+              valores distintos se agrupan en tramos para que la forma de la distribución se lea.
+              La tabla trae el porcentaje acumulado, que responde hasta qué diámetro se concentra
+              el volumen.
+            </p>
+          </div>
+          <div class="pill-row">
+            <span id="diametroResumen" class="pill">Cargando</span>
+            <button class="chart-send" type="button"
+                    onclick="enviarGraficoASlides('distribucionDiametro', 'Distribución de la cubicación por diámetro')">Enviar a Slides</button>
+          </div>
+        </div>
+        <div class="grid-main">
+          <div id="chartDiametro" class="chart"></div>
+          <div id="tablaDiametro"></div>
+        </div>
+      </div>
+
       <div class="grid-main" style="margin-bottom:14px">
         <div class="card">
           <div class="card-head">

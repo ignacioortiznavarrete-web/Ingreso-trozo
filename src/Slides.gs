@@ -23,7 +23,8 @@ const SLIDES_CHARTS = {
   calidadTrozos: { titulo: 'Trozos por calidad' },
   calidadCubicacion: { titulo: 'Cubicación por calidad' },
   brechaProveedores: { titulo: 'Brecha vs plan a fecha por proveedor' },
-  distribucionLargo: { titulo: 'Distribución de la cubicación por largo' }
+  distribucionLargo: { titulo: 'Distribución de la cubicación por largo' },
+  distribucionDiametro: { titulo: 'Distribución de la cubicación por diámetro' }
 };
 
 function extractSlidesId_(url) {
@@ -242,9 +243,46 @@ function actualizarGraficosPresentacion(force) {
     sh.getRange(1, 18, largoTabla.length, 2).setValues(largoTabla);
   }
 
+  // ── Bloque 7: distribución de la cubicación por diámetro ──
+  // El diámetro es continuo: si hay muchos valores distintos se agrupan en
+  // tramos, con la misma regla que usa el dashboard.
+  const porDiametro = {};
+  (data.matriz || []).forEach(m => {
+    const d = Math.round(Number(m.diametro) || 0);
+    if (!d) return;
+    porDiametro[d] = (porDiametro[d] || 0) + (Number(m.cubicacion) || 0);
+  });
+
+  const diametros = Object.keys(porDiametro).map(Number).sort(function (a, b) { return a - b; });
+  const diametroTabla = [['Diámetro', 'm³']];
+
+  if (diametros.length) {
+    const maxTramos = 22;
+    const anchoTramo = diametros.length <= maxTramos
+      ? 1
+      : Math.max(2, Math.ceil((diametros[diametros.length - 1] - diametros[0] + 1) / maxTramos));
+
+    const base = diametros[0];
+    const tramos = {};
+
+    diametros.forEach(function (d) {
+      const inicio = base + Math.floor((d - base) / anchoTramo) * anchoTramo;
+      tramos[inicio] = (tramos[inicio] || 0) + porDiametro[d];
+    });
+
+    Object.keys(tramos).map(Number).sort(function (a, b) { return a - b; }).forEach(function (inicio) {
+      const etiqueta = anchoTramo === 1
+        ? inicio + ' cm'
+        : inicio + '-' + (inicio + anchoTramo - 1) + ' cm';
+      diametroTabla.push([etiqueta, Math.round(tramos[inicio])]);
+    });
+
+    sh.getRange(1, 21, diametroTabla.length, 2).setValues(diametroTabla);
+  }
+
   // ── Gráficos incrustados (mismos colores del dashboard) ──
   const chartRowStart = Math.max(entrega.length, top.length, calidadTrozos.length,
-                                 brechaTabla.length, largoTabla.length) + 3;
+                                 brechaTabla.length, largoTabla.length, diametroTabla.length) + 3;
 
   sh.insertChart(
     sh.newChart()
@@ -340,6 +378,24 @@ function actualizarGraficosPresentacion(force) {
         .setOption('legend', { position: 'none' })
         .setOption('vAxis', { title: 'm³' })
         .setOption('hAxis', { title: 'Largo' })
+        .setOption('width', 900)
+        .setOption('height', 420)
+        .build()
+    );
+  }
+
+  if (diametroTabla.length > 1) {
+    sh.insertChart(
+      sh.newChart()
+        .setChartType(Charts.ChartType.COLUMN)
+        .addRange(sh.getRange(1, 21, diametroTabla.length, 2))
+        .setPosition(chartRowStart + 120, 1, 0, 0)
+        .setOption('title', 'Distribución de la cubicación por diámetro' + (monthLabel ? ' · ' + monthLabel : ''))
+        .setOption('colors', ['#2D6A4F'])
+        .setOption('series', { 0: { dataLabel: 'value' } })
+        .setOption('legend', { position: 'none' })
+        .setOption('vAxis', { title: 'm³' })
+        .setOption('hAxis', { title: 'Diámetro' })
         .setOption('width', 900)
         .setOption('height', 420)
         .build()

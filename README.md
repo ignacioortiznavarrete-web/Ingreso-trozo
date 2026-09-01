@@ -41,8 +41,9 @@ y Apuntes. Los filtros son compartidos y aplican a todas las pestañas.
 proveedor, calidad o largo, y cada día se abre en su propio detalle. Ver más
 abajo.
 
-**Distribución de la cubicación por largo.** Cuánto de lo recibido viene en
-cada largo, con su participación, diámetro promedio y eficiencia.
+**Distribución de la cubicación por largo y por diámetro.** Cuánto de lo
+recibido viene en cada largo, y el histograma de diámetros con su porcentaje
+acumulado.
 
 **Los gráficos muestran sus cifras.** Cada barra lleva su valor a la vista,
 para poder llevarlas a una presentación sin depender del tooltip.
@@ -227,6 +228,40 @@ cambiar el corte, en `JsResumen.html`:
 
 ```js
 const MAX_SERIES_APERTURA = 8;
+```
+
+---
+
+## Las dos distribuciones
+
+Son dos tarjetas parecidas pero con datos de naturaleza distinta, y por eso se
+dibujan distinto.
+
+**Por largo.** El largo tiene un puñado de valores fijos (2,44 · 3,2 · 4 · 5,5
+metros), así que es una categoría ordenada: una columna por valor, con la rampa
+de verdes que va del más corto al más largo. Ese color se reutiliza cuando se
+apertura la entrega diaria por largo, así que el mismo verde identifica al
+mismo largo en los tres lugares donde aparece.
+
+**Por diámetro.** El diámetro es una medida continua, así que es un
+histograma. Cuando hay más de 22 valores distintos se agrupan en tramos del
+ancho necesario para que la forma de la distribución se lea, en vez de un peine
+de barras de un píxel. Va en un solo verde: la posición ya codifica el
+diámetro, y pintarlo además con una rampa sería decir lo mismo dos veces. Solo
+se destaca en verde oscuro el tramo donde cae el diámetro promedio ponderado,
+que sí es un dato.
+
+La tabla del diámetro trae el **porcentaje acumulado**, que responde la
+pregunta de compra: hasta qué diámetro se concentra el volumen. El encabezado
+de la tarjeta resume el promedio, la mediana y el percentil 80. Ese acumulado
+va en la tabla y no como segunda línea en el gráfico a propósito: mezclar m³ y
+porcentaje en un mismo gráfico obligaría a dos ejes, que es la forma más común
+de hacer ilegible una comparación.
+
+Para cambiar el corte de agrupación, en `JsResumen.html`:
+
+```js
+const MAX_TRAMOS_DIAMETRO = 22;   // sobre esto, agrupa en tramos
 ```
 
 ---

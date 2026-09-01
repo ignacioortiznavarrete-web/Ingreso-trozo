@@ -226,6 +226,7 @@ function renderTables(stats) {
 
   renderMatrizTable(stats);
   renderTablaLargo(stats);
+  renderTablaDiametro(stats);
 }
 
 function renderMatrizTable(stats) {
@@ -670,6 +671,7 @@ function renderChartsForActiveTab(stats) {
   if (ACTIVE_TAB === 'resumen') {
     drawTimeChart(stats.rows);
     renderChartLargo(stats);
+    renderChartDiametro(stats);
     renderTopProveedoresChart(stats.rows);
     renderBrechaChart();
     renderCalidadCharts(stats);
@@ -1445,6 +1447,186 @@ function renderTablaLargo(stats) {
     ] : null,
     { clase: 'short', vacio: 'Sin largos registrados para los filtros actuales.' }
   );
+}
+
+/* ══════════════════════ DISTRIBUCIÓN POR DIÁMETRO ══════════════════════ */
+
+/* A diferencia del largo, que tiene un puñado de valores fijos, el diámetro es
+   una medida continua: esto es un histograma. Cuando hay más valores distintos
+   que tramos legibles se agrupan en rangos, para que se vea la forma de la
+   distribución en vez de un peine de barras de un píxel. */
+const MAX_TRAMOS_DIAMETRO = 22;
+
+function anchoTramoDiametro(valores) {
+  if (valores.length <= MAX_TRAMOS_DIAMETRO) return 1;
+
+  const rango = valores[valores.length - 1] - valores[0] + 1;
+  return Math.max(2, Math.ceil(rango / MAX_TRAMOS_DIAMETRO));
+}
+
+function buildDiametroRows(rows) {
+  const crudo = {};
+
+  (rows || []).forEach(r => {
+    const d = Math.round(Number(r.diametroPromedio) || 0);
+    if (!d) return;
+
+    if (!crudo[d]) crudo[d] = { trozos: 0, cubicacion: 0 };
+    crudo[d].trozos += Number(r.trozos) || 0;
+    crudo[d].cubicacion += Number(r.cubicacion) || 0;
+  });
+
+  const valores = Object.keys(crudo).map(Number).sort((a, b) => a - b);
+
+  if (!valores.length) return { lista: [], ancho: 1, promedio: 0, p50: 0, p80: 0 };
+
+  const ancho = anchoTramoDiametro(valores);
+  const base = valores[0];
+  const tramos = {};
+
+  valores.forEach(d => {
+    const inicio = base + Math.floor((d - base) / ancho) * ancho;
+
+    if (!tramos[inicio]) {
+      tramos[inicio] = {
+        inicio: inicio,
+        fin: inicio + ancho - 1,
+        etiqueta: ancho === 1 ? inicio + ' cm' : inicio + '-' + (inicio + ancho - 1) + ' cm',
+        trozos: 0,
+        cubicacion: 0,
+        diametroPonderado: 0
+      };
+    }
+
+    tramos[inicio].trozos += crudo[d].trozos;
+    tramos[inicio].cubicacion += crudo[d].cubicacion;
+    tramos[inicio].diametroPonderado += d * crudo[d].trozos;
+  });
+
+  const lista = Object.values(tramos).sort((a, b) => a.inicio - b.inicio);
+  const total = lista.reduce((sum, x) => sum + x.cubicacion, 0);
+  const totalTrozos = lista.reduce((sum, x) => sum + x.trozos, 0);
+  const ponderado = lista.reduce((sum, x) => sum + x.diametroPonderado, 0);
+
+  // El acumulado responde la pregunta de compra: hasta qué diámetro se
+  // concentra el volumen que estoy recibiendo.
+  let acumulado = 0;
+  let p50 = 0, p80 = 0;
+
+  lista.forEach(x => {
+    x.participacion = total ? x.cubicacion / total : 0;
+    x.diametroPromedio = x.trozos ? x.diametroPonderado / x.trozos : 0;
+    x.eficiencia = x.trozos ? x.cubicacion / x.trozos : 0;
+
+    acumulado += x.participacion;
+    x.acumulado = acumulado;
+
+    if (!p50 && acumulado >= 0.5) p50 = x.fin;
+    if (!p80 && acumulado >= 0.8) p80 = x.fin;
+  });
+
+  return {
+    lista: lista,
+    ancho: ancho,
+    total: total,
+    totalTrozos: totalTrozos,
+    promedio: totalTrozos ? ponderado / totalTrozos : 0,
+    p50: p50,
+    p80: p80
+  };
+}
+
+function renderTablaDiametro(stats) {
+  const cont = document.getElementById('tablaDiametro');
+  if (!cont) return;
+
+  const d = buildDiametroRows(stats.rows);
+
+  setText('diametroResumen', d.lista.length
+    ? 'Promedio ' + fmt(d.promedio) + ' cm · la mitad del volumen bajo ' + fmt0(d.p50) +
+      ' cm · el 80% bajo ' + fmt0(d.p80) + ' cm'
+    : 'Sin diámetros registrados');
+
+  cont.innerHTML = makeTable(
+    ['Diámetro', num('m³'), num('% del total'), num('% acumulado'), num('Trozos'), num('Eficiencia')],
+    d.lista.map(x => [
+      escapeHtml(x.etiqueta),
+      fmt0(x.cubicacion),
+      fmtPercent(x.participacion),
+      fmtPercent(x.acumulado),
+      fmt0(x.trozos),
+      fmt(x.eficiencia)
+    ]),
+    d.lista.length ? [
+      'Total · ' + fmt0(d.lista.length) + (d.ancho === 1 ? ' diámetros' : ' tramos'),
+      fmt0(d.total),
+      '100%',
+      '',
+      fmt0(d.totalTrozos),
+      fmt(d.totalTrozos ? d.total / d.totalTrozos : 0)
+    ] : null,
+    { clase: 'tall', vacio: 'Sin diámetros registrados para los filtros actuales.' }
+  );
+}
+
+function renderChartDiametro(stats) {
+  if (!isVisible('chartDiametro')) return;
+
+  const d = buildDiametroRows(stats.rows);
+
+  if (!d.lista.length) {
+    setChartEmpty('chartDiametro', 'Sin diámetros registrados para los filtros actuales.');
+    return;
+  }
+
+  // Un histograma se lee por su forma: la posición ya codifica el diámetro, así
+  // que pintarlo además con una rampa sería repetir lo mismo dos veces. Se usa
+  // un solo verde y se destaca el tramo donde cae el diámetro promedio, que sí
+  // es un dato y no decoración.
+  const tramoPromedio = d.lista.find(x => d.promedio >= x.inicio && d.promedio <= x.fin + 0.999);
+  // Con ~48px por columna una cifra de 5 caracteres entra: se rotulan todos
+  // los tramos hasta 18, y recién sobre eso se saltea.
+  const paso = pasoEtiquetas(d.lista.length, 18);
+
+  const tabla = google.visualization.arrayToDataTable([
+    ['Diámetro', 'm³', { type: 'string', role: 'style' },
+     { type: 'string', role: 'annotation' },
+     { type: 'string', role: 'tooltip', p: { html: true } }],
+    ...d.lista.map((x, i) => [
+      x.etiqueta,
+      x.cubicacion,
+      (tramoPromedio && x.inicio === tramoPromedio.inicio) ? PALETA.forest : PALETA.forest2,
+      (i % paso === 0) ? etiquetaValor(fmt0(x.cubicacion)) : null,
+      '<div style="padding:10px 12px;font:400 12px Inter,Arial,sans-serif;min-width:210px">' +
+        '<div style="font-weight:700;color:#1E4D38;margin-bottom:6px">Diámetro ' +
+        escapeHtml(x.etiqueta) + '</div>' +
+        filaTooltip('m³', fmt0(x.cubicacion) + ' m³') +
+        filaTooltip('Parte del total', fmtPercent(x.participacion)) +
+        filaTooltip('Acumulado hasta aquí', fmtPercent(x.acumulado)) +
+        filaTooltip('Trozos', fmt0(x.trozos)) +
+        filaTooltip('Eficiencia', fmt(x.eficiencia) + ' m³/trozo') +
+        ((tramoPromedio && x.inicio === tramoPromedio.inicio)
+          ? '<div style="margin-top:7px;color:#1E4D38;font-size:11px;font-weight:700">' +
+            'Aquí cae el diámetro promedio (' + fmt(d.promedio) + ' cm)</div>'
+          : '') +
+      '</div>'
+    ])
+  ]);
+
+  new google.visualization.ColumnChart(document.getElementById('chartDiametro')).draw(tabla, {
+    ...OPCIONES_BASE,
+    chartArea: { width: '86%', height: '72%' },
+    vAxis: { title: 'm³', minValue: 0, textStyle: { color: PALETA.muted, fontSize: tamanoEtiqueta(11) },
+             gridlines: { color: '#EEF2EF' },
+             ...holguraEje(Math.max(0, ...d.lista.map(x => x.cubicacion)), 1.18) },
+    hAxis: { title: d.ancho === 1 ? 'Diámetro (cm)' : 'Diámetro (tramos de ' + d.ancho + ' cm)',
+             textStyle: { color: PALETA.text, fontSize: tamanoEtiqueta(10.5) },
+             titleTextStyle: { color: PALETA.muted, italic: false, fontSize: 11 },
+             slantedText: d.lista.length > 12, slantedTextAngle: 40 },
+    tooltip: { isHtml: true },
+    bar: { groupWidth: '86%' },
+    annotations: anotacionesFuera(10)
+  });
 }
 
 function renderChartLargo(stats) {

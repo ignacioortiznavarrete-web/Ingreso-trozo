@@ -37,7 +37,9 @@ function hojaDatos() {
         const cub = m3 * share;
         filas.push([
           new Date(2026, 7, dia), '08:30', 'G' + dia + j, prov, predios[prov], comunas[prov],
-          '251-' + (10 + j * 3 + (i % 3)), cal, nom, 24 + j,
+          // Diámetros repartidos entre 14 y 43 cm: son bastantes valores
+          // distintos, así que el histograma tiene que agruparlos en tramos.
+          '251-' + (10 + j * 3 + (i % 3)), cal, nom, 14 + j * 6 + (i % 6),
           LARGOS[(i + j) % LARGOS.length], Math.round(cub / 0.28), cub
         ]);
       });

@@ -371,7 +371,64 @@ setTimeout(() => {
     win.eval('PRESENT.active = false');
     win.renderChartsForActiveTab();
 
-    console.log('\n16. Sin errores acumulados');
+    console.log('\n16. Distribución por diámetro');
+    const gd = id => [...win.__charts].reverse().find(c => c.id === id);
+
+    ok(!!gd('chartDiametro'), 'el histograma por diámetro se dibuja');
+    ok(q('tbody tr', $('tablaDiametro')).length > 5, 'la tabla lista los tramos',
+       q('tbody tr', $('tablaDiametro')).length);
+
+    // El fixture trae 30 diámetros distintos: tienen que agruparse en tramos.
+    const d = win.eval('JSON.stringify(buildDiametroRows(getFilteredDetailRows()))');
+    const dist = JSON.parse(d);
+    ok(dist.ancho > 1, 'con 30 valores distintos agrupa en tramos', 'ancho ' + dist.ancho + ' cm');
+    ok(dist.lista.length <= 22, 'y no supera el máximo de tramos legibles', dist.lista.length);
+    ok(/\d+-\d+ cm/.test(dist.lista[0].etiqueta), 'las etiquetas son rangos',
+       dist.lista[0].etiqueta);
+
+    const ultimoTramo = dist.lista[dist.lista.length - 1];
+    ok(Math.abs(ultimoTramo.acumulado - 1) < 1e-9, 'el acumulado cierra en 100%',
+       (ultimoTramo.acumulado * 100).toFixed(2) + '%');
+    ok(dist.lista.every((x, i) => i === 0 || x.acumulado >= dist.lista[i - 1].acumulado),
+       'el acumulado nunca baja');
+    ok(dist.lista.every((x, i) => i === 0 || x.inicio > dist.lista[i - 1].inicio),
+       'los tramos vienen ordenados por diámetro');
+    ok(dist.p50 > 0 && dist.p80 >= dist.p50, 'calcula la mediana y el percentil 80',
+       'p50 ' + dist.p50 + ' cm · p80 ' + dist.p80 + ' cm');
+    ok(Math.abs(dist.promedio - win.eval('DATA.kpis.diametroPromedio')) < 0.6,
+       'el promedio ponderado coincide con el KPI', dist.promedio.toFixed(2));
+
+    ok(/Promedio .* cm/.test(txt('diametroResumen')), 'el resumen del encabezado lo informa',
+       txt('diametroResumen'));
+
+    // Un solo verde, salvo el tramo donde cae el promedio.
+    const estilos = (gd('chartDiametro').datos.cuerpo || []).map(f => f[2]);
+    ok(new Set(estilos).size === 2, 'el histograma usa un verde y destaca un solo tramo',
+       [...new Set(estilos)].join(', '));
+    ok(estilos.filter(c => c === '#1E4D38').length === 1,
+       'el tramo destacado es exactamente uno',
+       estilos.filter(c => c === '#1E4D38').length);
+
+    // Con pocos valores distintos no debe agrupar.
+    const pocos = win.eval('JSON.stringify(buildDiametroRows([' +
+      '{diametroPromedio:20,trozos:10,cubicacion:5},' +
+      '{diametroPromedio:22,trozos:10,cubicacion:5},' +
+      '{diametroPromedio:24,trozos:10,cubicacion:5}]))');
+    const dp = JSON.parse(pocos);
+    ok(dp.ancho === 1, 'con pocos diámetros no agrupa', 'ancho ' + dp.ancho);
+    ok(dp.lista[0].etiqueta === '20 cm', 'y la etiqueta es el valor exacto', dp.lista[0].etiqueta);
+
+    ok(JSON.parse(win.eval('JSON.stringify(buildDiametroRows([]))')).lista.length === 0,
+       'sin filas no revienta');
+
+    console.log('\n17. Nada de lo anterior se perdió');
+    ok(!!gd('chartLargo') && q('tbody tr', $('tablaLargo')).length === 5,
+       'la distribución por largo sigue ahí');
+    ok(!!gd('chartFecha') && !!gd('chartTopProveedores') && !!gd('chartBrecha'),
+       'la entrega diaria, el top y la brecha siguen ahí');
+    ok(q('.semaforo-item').length === 5, 'el plan de acción sigue intacto');
+
+    console.log('\n18. Sin errores acumulados');
     ok(win.__errores.length === 0, 'ninguna excepción en toda la sesión',
        win.__errores.slice(0,4).join(' | ') || 'ninguna');
 
