@@ -13,7 +13,9 @@
 *******************************************************/
 
 const CONFIG = {
-  SPREADSHEET_ID: '1q_6ojGWI0OPjopobAIMtIdlRaLOHAMNyUhSKJzlSvgg',
+  // Planilla de datos. Es la única fuente de verdad del ID: Valores.gs
+  // abre esta misma planilla a través de getSpreadsheet_().
+  SPREADSHEET_ID: '16PXuCO0928jucLChExPfB7YvX2b3AtFaWzlkLW0kruo',
   SHEET_NAME: 'Hoja 1',
   PLAN_SHEET_NAME: 'Hoja 2',
   PROJECTION_SHEET_NAME: 'ProyeccionCamiones',

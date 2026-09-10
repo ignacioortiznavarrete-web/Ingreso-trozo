@@ -43,9 +43,10 @@
  CONFIGURACIÓN
 **************************/
 const VAL_CONFIG = {
-  // Si queda "", usa la planilla activa. Si la corres desde el editor del
-  // dashboard, ya es la correcta. El ID es el mismo que usa Codigo.gs.
-  SPREADSHEET_ID: '1q_6ojGWI0OPjopobAIMtIdlRaLOHAMNyUhSKJzlSvgg',
+  // Solo se usa como respaldo: valAbrirPlanilla_() intenta primero
+  // getSpreadsheet_() de Codigo.gs, que es donde vive el ID de verdad. Este
+  // valor entra en juego únicamente si se ejecuta Valores.gs sin Codigo.gs.
+  SPREADSHEET_ID: '16PXuCO0928jucLChExPfB7YvX2b3AtFaWzlkLW0kruo',
 
   MAIN_SHEET: 'Hoja 1',
 
